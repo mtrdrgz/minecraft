@@ -79,6 +79,25 @@ tr '\n' '\0' < "$BUILD_DIR/.modlist.tsv" \
   || die "one or more mod downloads failed"
 rm -f "$BUILD_DIR/.modlist.tsv"
 
+# Mods that are not in the .mrpack. Separate file because mods.lock.json is
+# regenerated from the pack and would drop anything hand-added to it.
+EXTRA="$REPO_ROOT/server/extra-mods.json"
+if [[ -f "$EXTRA" ]]; then
+  EXTRA_COUNT="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["mods"]))' "$EXTRA")"
+  if (( EXTRA_COUNT > 0 )); then
+    log "downloading $EXTRA_COUNT extra server mod(s)"
+    python3 -c '
+import json, sys
+for m in json.load(open(sys.argv[1]))["mods"]:
+    print("\t".join([m["url"], m["path"], m.get("sha512", "")]))
+' "$EXTRA" > "$BUILD_DIR/.extralist.tsv"
+    tr '\n' '\0' < "$BUILD_DIR/.extralist.tsv" \
+      | xargs -0 -P 4 -n 1 bash -c 'download_line "$1"' _ \
+      || die "extra mod download failed"
+    rm -f "$BUILD_DIR/.extralist.tsv"
+  fi
+fi
+
 # --------------------------------------------------------------- overrides ---
 log "applying pack overrides"
 OVR="$(mktemp -d)"
@@ -121,6 +140,15 @@ rm -rf "$OVR"
 cp "$REPO_ROOT/server/server.properties" "$BUILD_DIR/server.properties"
 cp "$REPO_ROOT/server/ops.json"          "$BUILD_DIR/ops.json"
 echo "eula=true" > "$BUILD_DIR/eula.txt"
+
+# BlueMap config. Shipped rather than letting BlueMap generate defaults, because
+# the defaults leave it disabled pending a manual accept-download, and a runner
+# has nobody to click it.
+if [[ -d "$REPO_ROOT/server/bluemap" ]]; then
+  log "applying BlueMap config"
+  mkdir -p "$BUILD_DIR/config/bluemap"
+  cp -a "$REPO_ROOT/server/bluemap/." "$BUILD_DIR/config/bluemap/"
+fi
 
 # Heap is sized from the runner's actual RAM rather than hardcoded: public-repo
 # runners are 16GB, but a downgrade to a 7GB runner would OOM a fixed -Xmx10G.

@@ -40,6 +40,14 @@ rsync -a --exclude 'world/' "$BUILD_DIR/" "$RUN_DIR/"
 log "restoring world from the '$WORLD_BRANCH' branch"
 "$REPO_ROOT/scripts/world.sh" restore
 
+# Map tiles are restored in the background: they are big and nobody is waiting
+# on them, so they must not sit on the critical path between shifts.
+if [[ "${BLUEMAP_ENABLED:-false}" == "true" ]]; then
+  log "restoring BlueMap tiles in the background"
+  ( "$REPO_ROOT/scripts/map.sh" restore || warn "map restore failed — it will re-render" ) &
+  MAP_RESTORE_PID=$!
+fi
+
 sed -i "s|^rcon.password=.*|rcon.password=${RCON_PASSWORD}|" "$RUN_DIR/server.properties"
 
 # The repo files and the runtime files are both authoritative: edits committed
@@ -106,6 +114,15 @@ graceful_stop() {
 
   log "final world save + squash"
   "$REPO_ROOT/scripts/world.sh" squash || warn "final world push FAILED"
+
+  if [[ "${BLUEMAP_ENABLED:-false}" == "true" ]]; then
+    log "saving BlueMap tiles"
+    "$REPO_ROOT/scripts/map.sh" save || warn "map push FAILED — tiles re-render next shift"
+  fi
+
+  if [[ -n "${CLOUDFLARED_PID:-}" ]] && kill -0 "$CLOUDFLARED_PID" 2>/dev/null; then
+    kill "$CLOUDFLARED_PID" 2>/dev/null || true
+  fi
 }
 trap graceful_stop EXIT INT TERM
 
@@ -207,6 +224,29 @@ elif [[ -n "$E4MC_DOMAIN" ]]; then
 else
   warn "no tunnel available — the server is up but unreachable from outside."
   warn "Set PLAYIT_SECRET (+ PLAYIT_ADDRESS), or enable e4mc's hostEnabled."
+fi
+
+# --- BlueMap web map over Cloudflare Tunnel --------------------------------
+# This is the one thing Cloudflare Tunnel *can* carry here: BlueMap is HTTP, and
+# a public hostname on Tunnel is HTTP/HTTPS only. Minecraft itself is raw TCP,
+# which is why it needs playit instead.
+CLOUDFLARED_PID=""
+if [[ "${BLUEMAP_ENABLED:-false}" == "true" ]]; then
+  if [[ -n "${CLOUDFLARED_TOKEN:-}" && -x "$HOME/bin/cloudflared" ]]; then
+    log "starting cloudflared for the map"
+    "$HOME/bin/cloudflared" tunnel --no-autoupdate run --token "$CLOUDFLARED_TOKEN" \
+      > "$RUN_DIR/cloudflared.log" 2>&1 &
+    CLOUDFLARED_PID=$!
+    sleep 8
+    if kill -0 "$CLOUDFLARED_PID" 2>/dev/null; then
+      log "cloudflared running — map should appear at ${MAP_HOSTNAME:-map.mtrdrgzcid.com}"
+    else
+      warn "cloudflared exited immediately:"
+      tail -20 "$RUN_DIR/cloudflared.log" >&2
+    fi
+  else
+    warn "BLUEMAP_ENABLED but CLOUDFLARED_TOKEN unset — map is only on localhost:8100"
+  fi
 fi
 
 $RCON "say §aServer is online. This shift ends in ${SERVE_MINUTES} minutes." >/dev/null 2>&1 || true
