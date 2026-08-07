@@ -1,0 +1,53 @@
+name: playit-register
+
+# Runs the playit agent briefly so it connects once and registers its platform
+# and version with playit.
+#
+# Until an agent has connected, the dashboard shows it with a "?" icon and
+# "tunnel type not supported", and refuses to assign any tunnel to it — there is
+# no way to create the tunnel first. This breaks that chicken-and-egg.
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: 'How long to keep the agent connected'
+        required: false
+        default: '120'
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install playit agent
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -fsSL --retry 5 --retry-all-errors \
+            -o "$HOME/bin/playitd" \
+            https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64
+          chmod +x "$HOME/bin/playitd"
+
+      - name: Connect once so the agent registers
+        env:
+          PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
+        run: |
+          set -uo pipefail
+          SECS="${{ github.event.inputs.seconds || '120' }}"
+          echo "running agent for ${SECS}s"
+          # Exit 124 is the timeout firing, which is the expected outcome.
+          timeout "${SECS}" "$HOME/bin/playitd" --secret "$PLAYIT_SECRET" > playit.log 2>&1
+          rc=$?
+          echo "agent exited rc=$rc"
+          echo "--- agent log ---"
+          # Redact anything resembling the secret before it reaches the log.
+          sed -E "s/${PLAYIT_SECRET}/***/g" playit.log | tail -60
+
+      - name: Tunnels after registering
+        if: always()
+        env:
+          PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
+        run: |
+          python3 tools/playit-address.py --json || true
+          python3 tools/playit-address.py || echo "(still no usable tunnel)"
