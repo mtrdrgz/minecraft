@@ -1,0 +1,21 @@
+name: playit-info
+
+# Prints the tunnels this agent has, using the secret the runner already holds.
+# Handy for checking the endpoint without exposing PLAYIT_SECRET locally.
+on:
+  workflow_dispatch:
+
+jobs:
+  info:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Show playit tunnels
+        env:
+          PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
+        run: |
+          echo "--- tunnels ---"
+          python3 tools/playit-address.py --json || true
+          echo "--- resolved address ---"
+          python3 tools/playit-address.py || echo "(no usable tunnel yet)"
