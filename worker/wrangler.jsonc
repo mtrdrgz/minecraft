@@ -4,6 +4,13 @@
   "main": "src/index.js",
   "compatibility_date": "2026-08-01",
 
+  // The runner publishes the tunnel address to the workers.dev hostname, not to
+  // map.mtrdrgzcid.com. Requests to the custom domain pass through the zone's
+  // WAF, which challenged the runner's datacenter IP with a "Just a moment..."
+  // interstitial and returned 403 before the Worker ever ran. workers.dev
+  // bypasses zone rules; visitors still use the custom domain.
+  "workers_dev": true,
+
   // A route rather than a custom domain. custom_domain wants to create and own
   // the DNS record, and refuses when one already exists ("Hostname already has
   // externally managed DNS records"). A route instead attaches to the existing

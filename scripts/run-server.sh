@@ -258,7 +258,7 @@ start_map_tunnel() {
   log "quick tunnel: $host"
 
   if [[ -n "${MAP_UPDATE_TOKEN:-}" ]]; then
-    "$REPO_ROOT/scripts/map-publish.sh" "${MAP_HOSTNAME:-map.mtrdrgzcid.com}" "$host" \
+    "$REPO_ROOT/scripts/map-publish.sh" "${MAP_PUBLISH_HOST:?}" "$host" \
       || warn "map Worker still points at the previous tunnel"
   else
     warn "MAP_UPDATE_TOKEN unset — map reachable only at https://$host"

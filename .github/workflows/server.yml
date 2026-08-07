@@ -147,6 +147,7 @@ jobs:
           # need no credentials, hence no token here; the rotating hostname is
           # absorbed by an Origin Rule instead of by DNS.
           MAP_HOSTNAME: map.mtrdrgzcid.com
+          MAP_PUBLISH_HOST: mtrdrgzcid-minecraft-map.mateorodriguezcid.workers.dev
           MAP_UPDATE_TOKEN: ${{ secrets.MAP_UPDATE_TOKEN }}
           SERVE_MINUTES: ${{ github.event.inputs.serve_minutes || '325' }}
           AUTOSAVE_MINUTES: '10'
