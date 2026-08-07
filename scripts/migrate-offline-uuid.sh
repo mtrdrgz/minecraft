@@ -17,7 +17,18 @@ ONLINE="${3:?online uuid}"
 
 log() { printf '\033[36m[migrate]\033[0m %s\n' "$*"; }
 
-OFFLINE="$(python3 - "$NAME" <<'PY'
+# Unlike the runner scripts, this one is meant to be run by hand, including from
+# Git Bash on Windows. Probe by executing: Windows ships an App Execution Alias
+# named python3 that resolves via `command -v` but exits with an error when run.
+PY_BIN=""
+for cand in python3 python py; do
+  if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import sys' >/dev/null 2>&1; then
+    PY_BIN="$cand"; break
+  fi
+done
+[[ -n "$PY_BIN" ]] || { echo "no working python interpreter found" >&2; exit 1; }
+
+OFFLINE="$("$PY_BIN" - "$NAME" <<'PY'
 import hashlib, sys, uuid
 name = sys.argv[1]
 print(uuid.UUID(bytes=hashlib.md5(f"OfflinePlayer:{name}".encode()).digest()[:16], version=3))
