@@ -33,16 +33,23 @@ jobs:
         env:
           PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
         run: |
-          set -uo pipefail
+          # GitHub runs steps with `bash -e`, so a non-zero exit from timeout
+          # would abort before the log is ever printed — and 124 (timeout fired)
+          # is the *expected* outcome here.
+          set +e
           SECS="${{ github.event.inputs.seconds || '120' }}"
+
+          ls -l "$HOME/bin/playitd" || echo "playitd MISSING"
+          "$HOME/bin/playitd" --help 2>&1 | head -20
+
           echo "running agent for ${SECS}s"
-          # Exit 124 is the timeout firing, which is the expected outcome.
           timeout "${SECS}" "$HOME/bin/playitd" --secret "$PLAYIT_SECRET" > playit.log 2>&1
           rc=$?
-          echo "agent exited rc=$rc"
+          echo "agent exited rc=$rc (124 = timeout fired, which is success here)"
           echo "--- agent log ---"
-          # Redact anything resembling the secret before it reaches the log.
+          # Redact the secret before it can reach a public log.
           sed -E "s/${PLAYIT_SECRET}/***/g" playit.log | tail -60
+          exit 0
 
       - name: Tunnels after registering
         if: always()
