@@ -140,6 +140,45 @@ def main() -> int:
         print(f"  ✓ {path}  ({len(data)} bytes)")
         saved += 1
 
+    # A static assets binding cannot be listed over HTTP, so completeness has to
+    # be inferred: pull every same-origin URL referenced by what we already have,
+    # plus the cover art the hub composes by convention rather than by link.
+    referenced = set()
+    for name in ("hub.html", "admin.html", "play.html", "login.html",
+                 "assets/style.css", "assets/i18n.js"):
+        fp = os.path.join(out, name)
+        if not os.path.exists(fp):
+            continue
+        text = open(fp, encoding="utf-8", errors="replace").read()
+        referenced.update(re.findall(r"""["'(](/[A-Za-z0-9_./-]+\.[A-Za-z0-9]{2,5})["')]""", text))
+        for m in re.findall(r"url\((/[^)]+)\)", text):
+            referenced.add(m.strip("\"'"))
+
+    for slug in ("hollow-knight", "silksong", "stardew", "terraria", "celeste"):
+        referenced.add(f"/art/{slug}.jpg")
+        referenced.add(f"/art/{slug}.png")
+
+    already = {
+        "/" + os.path.relpath(os.path.join(r, f), out).replace(os.sep, "/")
+        for r, _, fs in os.walk(out) for f in fs
+    }
+    todo = sorted(x for x in referenced if x not in already and not x.startswith("//"))
+
+    print(f"\ncomprobando {len(todo)} rutas referenciadas...")
+    for path in todo:
+        try:
+            data = fetch(opener, path, binary=True)
+        except Exception:
+            continue                       # a 404 or redirect just means it is absent
+        if not data:
+            continue
+        dest = os.path.join(out, path.lstrip("/"))
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "wb") as f:
+            f.write(data)
+        print(f"  + {path}  ({len(data)} bytes)")
+        saved += 1
+
     print(f"\n{saved} ficheros en {out}/")
     print("La contraseña no se ha escrito en disco ni en el historial.")
     return 0
