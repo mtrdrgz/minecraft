@@ -12,8 +12,13 @@ the CLI performs (packages/playit-cli/src/main.rs):
 The secret is never printed. It is piped directly into `gh secret set`, so it
 does not appear in the terminal, in scrollback, or in shell history.
 
-  playit-claim.py url                      -> start a claim, print the URL
-  playit-claim.py wait <code> <repo>       -> wait for approval, store secret
+  playit-claim.py url [agent_type]         -> start a claim, print the URL
+  playit-claim.py wait <code> <repo> [type] -> wait for approval, store secret
+
+agent_type defaults to "assignable". Do NOT use "self-managed" here: that kind
+of agent defines its own tunnels and refuses ones created in the dashboard, so
+the New Tunnel page shows "tunnel type not supported" and cannot continue.
+The playit CLI defaults to self-managed, which is the wrong default for us.
 """
 import json
 import os
@@ -25,7 +30,7 @@ import urllib.error
 import urllib.request
 
 API = "https://api.playit.gg"
-AGENT_TYPE = "self-managed"
+DEFAULT_AGENT_TYPE = "assignable"
 VERSION = "mtrdrgzcid-minecraft-actions"
 
 
@@ -44,27 +49,28 @@ def call(path: str, body: dict) -> dict:
         return json.loads(e.read().decode())
 
 
-def setup(code: str) -> str:
-    r = call("/claim/setup", {"code": code, "agent_type": AGENT_TYPE, "version": VERSION})
+def setup(code: str, agent_type: str) -> str:
+    r = call("/claim/setup", {"code": code, "agent_type": agent_type, "version": VERSION})
     if r.get("status") == "fail":
         raise SystemExit(f"playit rejected the claim: {r.get('data')}")
     return r.get("data", "")
 
 
-def cmd_url() -> int:
+def cmd_url(agent_type: str) -> int:
     code = secrets.token_hex(5)          # 5 bytes, exactly what the CLI generates
-    state = setup(code)
+    state = setup(code, agent_type)
     print(f"code={code}")
+    print(f"agent_type={agent_type}")
     print(f"state={state}")
     print(f"url=https://playit.gg/claim/{code}")
     return 0
 
 
-def cmd_wait(code: str, repo: str) -> int:
+def cmd_wait(code: str, repo: str, agent_type: str) -> int:
     deadline = time.time() + 900
     state = ""
     while time.time() < deadline:
-        state = setup(code)
+        state = setup(code, agent_type)
         if state == "UserAccepted":
             break
         if state == "UserRejected":
@@ -98,8 +104,9 @@ def cmd_wait(code: str, repo: str) -> int:
 
 if __name__ == "__main__":
     if len(sys.argv) >= 2 and sys.argv[1] == "url":
-        sys.exit(cmd_url())
+        sys.exit(cmd_url(sys.argv[2] if len(sys.argv) > 2 else DEFAULT_AGENT_TYPE))
     if len(sys.argv) >= 4 and sys.argv[1] == "wait":
-        sys.exit(cmd_wait(sys.argv[2], sys.argv[3]))
+        sys.exit(cmd_wait(sys.argv[2], sys.argv[3],
+                          sys.argv[4] if len(sys.argv) > 4 else DEFAULT_AGENT_TYPE))
     print(__doc__, file=sys.stderr)
     sys.exit(2)
