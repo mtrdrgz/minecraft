@@ -5,14 +5,18 @@
 # domain_assignment_complete), so the target changes on every runner handoff.
 # This is the DDNS half of that: rewrite the CNAME each boot.
 #
-# Usage: dns-update.sh <fqdn> <target>
-#   dns-update.sh minecraft.mtrdrgzcid.com abc123.e4mc.link
+# Usage: dns-update.sh <fqdn> <target> [port]
+#   dns-update.sh minecraft.mtrdrgzcid.com abc.gl.at.ply.gg 41234
+#
+# The port matters: playit's free tier assigns a random one, and the SRV record
+# is what lets players type a bare domain instead of host:port.
 #
 # Requires CF_API_TOKEN (Zone.DNS:Edit) and CF_ZONE_ID.
 set -Eeuo pipefail
 
-FQDN="${1:?usage: dns-update.sh <fqdn> <target>}"
-TARGET="${2:?usage: dns-update.sh <fqdn> <target>}"
+FQDN="${1:?usage: dns-update.sh <fqdn> <target> [port]}"
+TARGET="${2:?usage: dns-update.sh <fqdn> <target> [port]}"
+PORT="${3:-25565}"
 
 : "${CF_API_TOKEN:?CF_API_TOKEN is not set}"
 : "${CF_ZONE_ID:?CF_ZONE_ID is not set}"
@@ -53,18 +57,30 @@ upsert() {
 
   record_id="$(printf '%s' "$existing" | python3 -c \
     'import json,sys; r=json.load(sys.stdin).get("result") or []; print(r[0]["id"] if r else "")')"
-  current="$(printf '%s' "$existing" | python3 -c \
-    'import json,sys; r=json.load(sys.stdin).get("result") or []
-print((r[0].get("data") or {}).get("target") or r[0].get("content","") if r else "")')"
+  # Compare target *and* port. Comparing only the target would silently skip the
+  # update when a relay keeps its hostname but moves to a different port.
+  local want
+  if [[ "$type" == "SRV" ]]; then
+    current="$(printf '%s' "$existing" | python3 -c \
+      'import json,sys
+r = json.load(sys.stdin).get("result") or []
+d = (r[0].get("data") or {}) if r else {}
+print(f"{d.get(\"target\",\"\")}:{d.get(\"port\",\"\")}" if r else "")')"
+    want="$TARGET:$PORT"
+  else
+    current="$(printf '%s' "$existing" | python3 -c \
+      'import json,sys; r=json.load(sys.stdin).get("result") or []; print(r[0].get("content","") if r else "")')"
+    want="$TARGET"
+  fi
 
-  if [[ -n "$record_id" && "$current" == "$TARGET" ]]; then
-    log "$type $name already points at $TARGET"
+  if [[ -n "$record_id" && "$current" == "$want" ]]; then
+    log "$type $name already points at $want"
     return 0
   fi
 
   local out
   if [[ -n "$record_id" ]]; then
-    log "updating $type $name: ${current:-<none>} -> $TARGET"
+    log "updating $type $name: ${current:-<none>} -> $want"
     out="$(cf PUT "/zones/$CF_ZONE_ID/dns_records/$record_id" "$body")" \
       || die "failed to update $type $name"
   else
@@ -81,16 +97,16 @@ print((r[0].get("data") or {}).get("target") or r[0].get("content","") if r else
 }
 
 srv_body() {
-  python3 - "$SRV_NAME" "$FQDN" "$TARGET" "$TTL" <<'PY'
+  python3 - "$SRV_NAME" "$FQDN" "$TARGET" "$TTL" "$PORT" <<'PY'
 import json, sys
-name, host, target, ttl = sys.argv[1:5]
+name, host, target, ttl, port = sys.argv[1:6]
 print(json.dumps({
     "type": "SRV",
     "name": name,
     "ttl": int(ttl),
     "data": {
         "service": "_minecraft", "proto": "_tcp", "name": host,
-        "priority": 0, "weight": 0, "port": 25565, "target": target,
+        "priority": 0, "weight": 0, "port": int(port), "target": target,
     },
 }))
 PY
@@ -103,5 +119,5 @@ cname_body() {
     "$FQDN" "$TARGET" "$TTL"
 }
 
-upsert SRV   "$SRV_NAME" "$(srv_body)"   "SRV $SRV_NAME -> $TARGET:25565 (TTL ${TTL}s)"
+upsert SRV   "$SRV_NAME" "$(srv_body)"   "SRV $SRV_NAME -> $TARGET:$PORT (TTL ${TTL}s)"
 upsert CNAME "$FQDN"     "$(cname_body)" "CNAME $FQDN -> $TARGET (TTL ${TTL}s, unproxied)"

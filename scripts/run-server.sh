@@ -141,38 +141,64 @@ current_domain() {
 }
 
 E4MC_DOMAIN=""
-log "waiting for e4mc to be assigned a relay domain"
-for _ in $(seq 1 60); do          # up to ~5 minutes
-  E4MC_DOMAIN="$(current_domain)"
-  [[ -n "$E4MC_DOMAIN" ]] && break
-  sleep 5
-done
-
-update_dns() {
-  local target="$1"
-  if [[ -z "${CF_API_TOKEN:-}" || -z "${CF_ZONE_ID:-}" || -z "${DNS_NAME:-}" ]]; then
-    warn "CF_API_TOKEN / CF_ZONE_ID / DNS_NAME not all set — skipping DNS update."
-    warn "Players must connect to $target directly this shift."
-    return 0
-  fi
-  "$REPO_ROOT/scripts/dns-update.sh" "$DNS_NAME" "$target" \
-    || warn "DNS update FAILED — players must use $target directly this shift"
-}
-
-if [[ -n "$E4MC_DOMAIN" ]]; then
-  log "e4mc domain: $E4MC_DOMAIN"
-  update_dns "$E4MC_DOMAIN"
-else
-  warn "e4mc never reported a domain — the server is up but unreachable from outside."
-  warn "Check that e4mc is in the mod set and hostEnabled=true in config/e4mc/e4mc.toml."
-  grep -iE 'e4mc' "$RUN_DIR/server.log" | tail -20 >&2 || true
+if [[ -z "${PLAYIT_SECRET:-}" ]]; then
+  log "waiting for e4mc to be assigned a relay domain"
+  for _ in $(seq 1 60); do          # up to ~5 minutes
+    E4MC_DOMAIN="$(current_domain)"
+    [[ -n "$E4MC_DOMAIN" ]] && break
+    sleep 5
+  done
 fi
 
-# playit is kept as an opt-in fallback: set PLAYIT_SECRET and it runs alongside.
+update_dns() {
+  local target="$1" port="${2:-25565}"
+  if [[ -z "${CF_API_TOKEN:-}" || -z "${CF_ZONE_ID:-}" || -z "${DNS_NAME:-}" ]]; then
+    warn "CF_API_TOKEN / CF_ZONE_ID / DNS_NAME not all set — skipping DNS update."
+    warn "Players must connect to $target:$port directly this shift."
+    return 0
+  fi
+  "$REPO_ROOT/scripts/dns-update.sh" "$DNS_NAME" "$target" "$port" \
+    || warn "DNS update FAILED — players must use $target:$port directly this shift"
+}
+
+# --- playit: the primary transport ------------------------------------------
+# e4mc was measured closing its tunnel after ~5 minutes with no players joined
+# (three sessions: ~4m, 5m2s, and 12m+ only while a player was connected). Its
+# own source warns it is built for short-lived LAN worlds. playit's endpoint is
+# stable and does not expire on idle, so DNS is written once and never churns —
+# which also removes the client-side SRV cache problem on every handoff.
+PUBLIC_HOST=""
+PUBLIC_PORT="25565"
+
 if [[ -n "${PLAYIT_SECRET:-}" && -x "$HOME/bin/playitd" ]]; then
-  log "PLAYIT_SECRET set — starting playit alongside e4mc"
+  log "starting playit tunnel"
   "$HOME/bin/playitd" --secret "$PLAYIT_SECRET" > "$RUN_DIR/playit.log" 2>&1 &
   PLAYIT_PID=$!
+  sleep 10
+  if ! kill -0 "$PLAYIT_PID" 2>/dev/null; then
+    warn "playit agent exited immediately — players cannot connect. Log:"
+    tail -30 "$RUN_DIR/playit.log" >&2
+  else
+    # The endpoint is stable, so it is configured rather than scraped from the
+    # agent's log, whose format is not a stable interface.
+    if [[ -n "${PLAYIT_ADDRESS:-}" ]]; then
+      PUBLIC_HOST="${PLAYIT_ADDRESS%%:*}"
+      [[ "$PLAYIT_ADDRESS" == *:* ]] && PUBLIC_PORT="${PLAYIT_ADDRESS##*:}"
+      log "playit endpoint: $PUBLIC_HOST:$PUBLIC_PORT"
+      update_dns "$PUBLIC_HOST" "$PUBLIC_PORT"
+    else
+      warn "PLAYIT_ADDRESS is not set — cannot publish DNS."
+      warn "Set it to the address playit assigned, e.g. abc-def.gl.at.ply.gg:41234"
+    fi
+  fi
+elif [[ -n "$E4MC_DOMAIN" ]]; then
+  warn "falling back to e4mc — expect the tunnel to close after ~5 idle minutes"
+  PUBLIC_HOST="$E4MC_DOMAIN"
+  log "e4mc domain: $E4MC_DOMAIN"
+  update_dns "$E4MC_DOMAIN" 25565
+else
+  warn "no tunnel available — the server is up but unreachable from outside."
+  warn "Set PLAYIT_SECRET (+ PLAYIT_ADDRESS), or enable e4mc's hostEnabled."
 fi
 
 $RCON "say §aServer is online. This shift ends in ${SERVE_MINUTES} minutes." >/dev/null 2>&1 || true
@@ -228,13 +254,15 @@ while true; do
   # e4mc can be reassigned a different relay domain if its session drops and
   # reconnects mid-shift. Without this the DNS record would point at a dead
   # relay for the rest of the shift.
-  if (( elapsed % 60 < 10 )); then
+  # Only relevant on the e4mc fallback; playit's endpoint never changes.
+  if [[ -z "${PLAYIT_SECRET:-}" ]] && (( elapsed % 60 < 10 )); then
     latest="$(current_domain)"
     if [[ -n "$latest" && "$latest" != "$E4MC_DOMAIN" ]]; then
       warn "e4mc domain changed: $E4MC_DOMAIN -> $latest"
       E4MC_DOMAIN="$latest"
+      PUBLIC_HOST="$latest"
       TUNNEL_FAILS=0
-      update_dns "$E4MC_DOMAIN"
+      update_dns "$E4MC_DOMAIN" 25565
       $RCON "say §ePublic address changed. If you disconnect, rejoin in a minute." >/dev/null 2>&1 || true
     fi
   fi
@@ -242,12 +270,12 @@ while true; do
   # The tunnel can die silently while the JVM stays perfectly healthy: e4mc's
   # relay keeps answering, but with "Unknown server", and nobody can join. RCON
   # cannot see that because the server itself is fine. Probe from outside.
-  if [[ -n "$E4MC_DOMAIN" ]] && (( elapsed % 120 < 10 )); then
-    if python3 "$REPO_ROOT/tools/mcping.py" "$E4MC_DOMAIN" >/dev/null 2>&1; then
+  if [[ -n "$PUBLIC_HOST" ]] && (( elapsed % 120 < 10 )); then
+    if python3 "$REPO_ROOT/tools/mcping.py" "$PUBLIC_HOST" "$PUBLIC_PORT" >/dev/null 2>&1; then
       TUNNEL_FAILS=0
     else
       TUNNEL_FAILS=$(( TUNNEL_FAILS + 1 ))
-      warn "tunnel probe failed ($TUNNEL_FAILS/$TUNNEL_FAIL_LIMIT) for $E4MC_DOMAIN"
+      warn "tunnel probe failed ($TUNNEL_FAILS/$TUNNEL_FAIL_LIMIT) for $PUBLIC_HOST:$PUBLIC_PORT"
       if (( TUNNEL_FAILS >= TUNNEL_FAIL_LIMIT )); then
         warn "e4mc tunnel is dead and did not recover — ending this shift so a"
         warn "fresh one takes over with a new session."

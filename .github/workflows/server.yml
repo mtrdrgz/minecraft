@@ -54,7 +54,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.BUILD_DIR }}
-          key: mcbuild-${{ hashFiles('server/mods.lock.json', 'server/server.properties') }}
+          key: mcbuild-${{ hashFiles('server/mods.lock.json', 'server/server.properties', 'scripts/build-pack.sh') }}
 
       # Always run. build-pack.sh is idempotent — it reuses the tree only if its
       # own .build-complete marker is present, and rebuilds from scratch
@@ -69,7 +69,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ${{ env.BUILD_DIR }}
-          key: mcbuild-${{ hashFiles('server/mods.lock.json', 'server/server.properties') }}
+          key: mcbuild-${{ hashFiles('server/mods.lock.json', 'server/server.properties', 'scripts/build-pack.sh') }}
 
   serve:
     needs: prep
@@ -100,7 +100,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.BUILD_DIR }}
-          key: mcbuild-${{ hashFiles('server/mods.lock.json', 'server/server.properties') }}
+          key: mcbuild-${{ hashFiles('server/mods.lock.json', 'server/server.properties', 'scripts/build-pack.sh') }}
 
       # Same reasoning as prep: unconditional, guarded by .build-complete.
       - name: Build server pack (cache miss or incomplete tree)
@@ -108,9 +108,9 @@ jobs:
           chmod +x scripts/*.sh
           ./scripts/build-pack.sh
 
-      # Only needed for the optional playit fallback; e4mc needs no binary, it
-      # is a mod and opens its own tunnel from inside the server.
-      - name: Install playit agent (optional fallback)
+      # playit is the primary transport. e4mc remains in the mod set as a
+      # fallback only: it was measured closing its tunnel after ~5 idle minutes.
+      - name: Install playit agent
         if: ${{ env.PLAYIT_SECRET != '' }}
         run: |
           mkdir -p "$HOME/bin"
@@ -123,9 +123,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}          # world branch pushes
           DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}  # successor dispatch
-          PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}    # optional fallback
-          # e4mc assigns a new relay domain every shift, so the CNAME is
-          # rewritten on each boot. This is the DDNS half of the setup.
+          PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
+          # Stable public endpoint playit assigned, e.g. abc.gl.at.ply.gg:41234.
+          # Configured rather than scraped from the agent log, whose format is
+          # not a stable interface. Not secret, but kept alongside for clarity.
+          PLAYIT_ADDRESS: ${{ vars.PLAYIT_ADDRESS }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
           DNS_NAME: minecraft.mtrdrgzcid.com
