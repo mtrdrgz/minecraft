@@ -1,0 +1,44 @@
+name: watchdog
+
+# Safety net only. The normal path is a shift dispatching its own successor;
+# this catches the cases that path cannot: the runner being killed outright,
+# a dispatch API failure, or Actions being briefly unavailable.
+#
+# Note: GitHub's minimum schedule interval is 5 minutes and scheduled runs on
+# public repos are queued at low priority, so this can fire late under load.
+# It is a backstop, not the primary mechanism.
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Restart the chain if no shift is alive
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          repo="$GITHUB_REPOSITORY"
+
+          active=0
+          for status in in_progress queued waiting requested pending; do
+            n="$(gh run list --repo "$repo" --workflow server.yml \
+                   --status "$status" --limit 1 --json databaseId \
+                 | jq 'length')"
+            active=$(( active + n ))
+          done
+
+          if (( active > 0 )); then
+            echo "server chain is alive ($active run(s) active) — nothing to do"
+            exit 0
+          fi
+
+          echo "no active server run found — restarting the chain"
+          gh workflow run server.yml --repo "$repo" --ref main

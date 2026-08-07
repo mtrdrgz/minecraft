@@ -1,0 +1,13 @@
+# Scripts must keep LF endings or bash on the runner breaks.
+*.sh text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+
+# Pack + world payloads are binary. Never let Git touch their bytes.
+*.mrpack binary
+*.jar    binary
+*.mca    binary
+*.dat    binary
+*.dat_old binary
+*.nbt    binary
+*.zst    binary

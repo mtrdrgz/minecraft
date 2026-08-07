@@ -1,0 +1,125 @@
+name: server
+
+# Every run is one server shift. The shift dispatches its own successor a few
+# minutes before it ends, so the chain is self-sustaining; watchdog.yml only
+# exists to restart the chain if a link breaks.
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [start-server]
+
+permissions:
+  contents: write   # required to push the world branch
+
+env:
+  BUILD_DIR: /home/runner/mcbuild
+  RUN_DIR: /home/runner/mcrun
+  WORLD_BRANCH: world
+
+jobs:
+  # Assembling the server tree takes ~5 minutes cold. Running it as a separate
+  # job means the successor can do this work *while the predecessor is still
+  # serving*, instead of after it exits — which is what keeps the handoff gap
+  # down to a cache restore plus a boot.
+  prep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache assembled server tree
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BUILD_DIR }}
+          key: mcbuild-${{ hashFiles('server/mods.lock.json', 'server/server.properties') }}
+
+      - name: Build server pack
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/build-pack.sh
+
+  serve:
+    needs: prep
+    runs-on: ubuntu-latest
+    # GitHub kills a job at 360m. Stay under it so shutdown is ours, not theirs.
+    timeout-minutes: 355
+    # Exactly one server may hold the world at a time. The successor queues here
+    # and starts within seconds of the predecessor releasing it.
+    concurrency:
+      group: minecraft-serve
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reclaim disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost \
+                      /usr/local/lib/android "$AGENT_TOOLSDIRECTORY" 2>/dev/null || true
+          df -h / | tail -1
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Restore assembled server tree
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.BUILD_DIR }}
+          key: mcbuild-${{ hashFiles('server/mods.lock.json', 'server/server.properties') }}
+
+      - name: Build server pack (cache miss fallback)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/build-pack.sh
+
+      - name: Install playit agent
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -fsSL --retry 5 --retry-all-errors \
+            -o "$HOME/bin/playitd" \
+            https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64
+          chmod +x "$HOME/bin/playitd"
+
+      - name: Run server shift
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}          # world branch pushes
+          DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}  # successor dispatch
+          PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
+          SERVE_MINUTES: '325'
+          AUTOSAVE_MINUTES: '10'
+          HANDOFF_LEAD_MINUTES: '12'
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/run-server.sh
+
+      # If the shift crashed before its own dispatch fired, start a successor
+      # now rather than waiting up to 5 minutes for the watchdog.
+      - name: Recover chain on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+        run: |
+          echo "shift failed — dispatching a replacement"
+          gh workflow run server.yml --repo "$GITHUB_REPOSITORY" --ref main || true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-logs-${{ github.run_id }}
+          path: |
+            /home/runner/mcrun/server.log
+            /home/runner/mcrun/playit.log
+            /home/runner/mcrun/logs/
+          retention-days: 7
+          if-no-files-found: ignore

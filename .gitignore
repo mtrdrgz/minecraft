@@ -1,0 +1,6 @@
+# Local build output — the server tree is assembled on the runner, never committed to main.
+/build/
+/run/
+*.log
+__pycache__/
+*.pyc
