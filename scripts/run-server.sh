@@ -138,6 +138,10 @@ $RCON "say §aServer is online. This shift ends in ${SERVE_MINUTES} minutes." >/
 dispatch_successor() {
   [[ "$DISPATCHED" == 1 ]] && return 0
   DISPATCHED=1
+  if [[ "${CONTINUE_CHAIN:-true}" == "false" ]]; then
+    log "CONTINUE_CHAIN=false — not starting a successor (this shift is the last)"
+    return 0
+  fi
   if [[ -z "${DISPATCH_TOKEN:-}" ]]; then
     warn "DISPATCH_TOKEN unset — cannot start the successor; watchdog must recover this"
     return 0

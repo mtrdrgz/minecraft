@@ -27,6 +27,13 @@ jobs:
           set -Eeuo pipefail
           repo="$GITHUB_REPOSITORY"
 
+          # Before DISPATCH_TOKEN exists this workflow would fail every 5
+          # minutes and bury real failures in noise. Stay quiet instead.
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "DISPATCH_TOKEN is not configured yet — watchdog is idle."
+            exit 0
+          fi
+
           active=0
           for status in in_progress queued waiting requested pending; do
             n="$(gh run list --repo "$repo" --workflow server.yml \

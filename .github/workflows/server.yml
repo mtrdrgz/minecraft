@@ -5,6 +5,16 @@ name: server
 # exists to restart the chain if a link breaks.
 on:
   workflow_dispatch:
+    inputs:
+      serve_minutes:
+        description: 'Shift length in minutes. Use a small value (e.g. 8) for a smoke test.'
+        required: false
+        default: '325'
+      continue_chain:
+        description: 'Dispatch a successor when this shift ends.'
+        type: boolean
+        required: false
+        default: true
   repository_dispatch:
     types: [start-server]
 
@@ -95,9 +105,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}          # world branch pushes
           DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}  # successor dispatch
           PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
-          SERVE_MINUTES: '325'
+          SERVE_MINUTES: ${{ github.event.inputs.serve_minutes || '325' }}
           AUTOSAVE_MINUTES: '10'
           HANDOFF_LEAD_MINUTES: '12'
+          CONTINUE_CHAIN: ${{ github.event.inputs.continue_chain == 'false' && 'false' || 'true' }}
         run: |
           chmod +x scripts/*.sh
           ./scripts/run-server.sh
@@ -105,10 +116,13 @@ jobs:
       # If the shift crashed before its own dispatch fired, start a successor
       # now rather than waiting up to 5 minutes for the watchdog.
       - name: Recover chain on failure
-        if: failure()
+        if: failure() && github.event.inputs.continue_chain != 'false'
         env:
           GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
         run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "DISPATCH_TOKEN unset — cannot recover the chain"; exit 0
+          fi
           echo "shift failed — dispatching a replacement"
           gh workflow run server.yml --repo "$GITHUB_REPOSITORY" --ref main || true
 
