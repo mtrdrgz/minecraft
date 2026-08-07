@@ -12,8 +12,11 @@ const FORCE_DROP = new Set([
   'do-a-barrel-roll',// pure client movement/camera
   'xaeros-minimap',  // client UI (server companion is a separate mod)
   'xaeros-world-map',// client UI
-  'distanthorizons', // client LOD renderer; server module is opt-in and heavy
 ]);
+// NOTE: distanthorizons is deliberately NOT dropped. It is server_side:optional
+// and in multiplayer the server half is what feeds clients LOD data beyond
+// their render distance. Without it DH renders only chunks the client already
+// loaded, which looks like "DH is broken on the server but fine in singleplayer".
 
 const keep = [];
 const dropped = [];

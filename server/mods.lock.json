@@ -7,8 +7,8 @@
   "generatedFrom": "Create+ 1.0.0",
   "counts": {
     "total": 176,
-    "keep": 121,
-    "dropped": 55
+    "keep": 122,
+    "dropped": 54
   },
   "mods": [
     {
@@ -379,6 +379,15 @@
       "size": 3906057,
       "sha512": "38d8d87878f39a063feb029db17702bedadf7554233ae56db6018c21225b6dff4d4cc31f4b0995254fd488e2a687f3b15bf9647c59dd42b9032791d34316ed0c",
       "server": "required"
+    },
+    {
+      "slug": "distanthorizons",
+      "title": "Distant Horizons",
+      "path": "mods/DistantHorizons-3.2.0-b-1.21.1-fabric-neoforge.jar",
+      "url": "https://cdn.modrinth.com/data/uCdwusMi/versions/ZpKb4kZp/DistantHorizons-3.2.0-b-1.21.1-fabric-neoforge.jar",
+      "size": 30207268,
+      "sha512": "d4199f92f992fbd2c75a3b0e4e81c8a98bee889013f7347f2149ffa62c86748bde22135e9b2c82a10875db94fa576571c661c5ee16d2f567bd8a93d6f255fd22",
+      "server": "optional"
     },
     {
       "slug": "distracting-trims",
@@ -1156,11 +1165,6 @@
       "slug": "ding",
       "title": "Ding",
       "reason": "server_side=unsupported"
-    },
-    {
-      "slug": "distanthorizons",
-      "title": "Distant Horizons",
-      "reason": "client-only (manual)"
     },
     {
       "slug": "do-a-barrel-roll",
