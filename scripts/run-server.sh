@@ -231,22 +231,42 @@ fi
 # a public hostname on Tunnel is HTTP/HTTPS only. Minecraft itself is raw TCP,
 # which is why it needs playit instead.
 CLOUDFLARED_PID=""
-if [[ "${BLUEMAP_ENABLED:-false}" == "true" ]]; then
-  if [[ -n "${CLOUDFLARED_TOKEN:-}" && -x "$HOME/bin/cloudflared" ]]; then
-    log "starting cloudflared for the map"
-    "$HOME/bin/cloudflared" tunnel --no-autoupdate run --token "$CLOUDFLARED_TOKEN" \
-      > "$RUN_DIR/cloudflared.log" 2>&1 &
-    CLOUDFLARED_PID=$!
-    sleep 8
-    if kill -0 "$CLOUDFLARED_PID" 2>/dev/null; then
-      log "cloudflared running — map should appear at ${MAP_HOSTNAME:-map.mtrdrgzcid.com}"
-    else
-      warn "cloudflared exited immediately:"
-      tail -20 "$RUN_DIR/cloudflared.log" >&2
-    fi
+MAP_TUNNEL_HOST=""
+
+# A quick tunnel gets a new hostname every start, including every time it is
+# restarted after a crash. Rather than let the map go dark, the hostname is read
+# from the log and pushed into a Cloudflare Origin Rule; DNS never changes.
+start_map_tunnel() {
+  [[ -x "$HOME/bin/cloudflared" ]] || { warn "cloudflared not installed"; return 1; }
+
+  rm -f "$RUN_DIR/cloudflared.log"
+  "$HOME/bin/cloudflared" tunnel --no-autoupdate --url http://127.0.0.1:8100 \
+    > "$RUN_DIR/cloudflared.log" 2>&1 &
+  CLOUDFLARED_PID=$!
+
+  local host=""
+  for _ in $(seq 1 30); do
+    host="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$RUN_DIR/cloudflared.log" 2>/dev/null \
+            | head -1 | sed 's|https://||')"
+    [[ -n "$host" ]] && break
+    kill -0 "$CLOUDFLARED_PID" 2>/dev/null || { warn "cloudflared died during startup"; return 1; }
+    sleep 2
+  done
+  [[ -n "$host" ]] || { warn "cloudflared never printed a tunnel URL"; return 1; }
+
+  MAP_TUNNEL_HOST="$host"
+  log "quick tunnel: $host"
+
+  if [[ -n "${CF_API_TOKEN:-}" && -n "${CF_ZONE_ID:-}" ]]; then
+    "$REPO_ROOT/scripts/map-origin.sh" "${MAP_HOSTNAME:-map.mtrdrgzcid.com}" "$host" \
+      || warn "could not point ${MAP_HOSTNAME:-map.mtrdrgzcid.com} at $host"
   else
-    warn "BLUEMAP_ENABLED but CLOUDFLARED_TOKEN unset — map is only on localhost:8100"
+    warn "CF_API_TOKEN/CF_ZONE_ID unset — map reachable only at https://$host"
   fi
+}
+
+if [[ "${BLUEMAP_ENABLED:-false}" == "true" ]]; then
+  start_map_tunnel || warn "map tunnel unavailable this shift"
 fi
 
 $RCON "say §aServer is online. This shift ends in ${SERVE_MINUTES} minutes." >/dev/null 2>&1 || true
@@ -365,6 +385,16 @@ PY
         $RCON "whitelist reload" >/dev/null 2>&1 || warn "whitelist reload failed"
         cp "$RUN_DIR/.whitelist.remote" "$RUN_DIR/.whitelist.seen"
       fi
+    fi
+  fi
+
+  # Keep the map reachable: if the quick tunnel dies it comes back with a
+  # different hostname, so restarting it is not enough — the origin rule has to
+  # follow. This is the whole reason DNS is not part of the loop.
+  if [[ "${BLUEMAP_ENABLED:-false}" == "true" ]] && (( elapsed % 120 < 10 )); then
+    if [[ -n "$CLOUDFLARED_PID" ]] && ! kill -0 "$CLOUDFLARED_PID" 2>/dev/null; then
+      warn "map tunnel died — restarting and repointing ${MAP_HOSTNAME:-map.mtrdrgzcid.com}"
+      start_map_tunnel || warn "map tunnel restart failed; will retry"
     fi
   fi
 
