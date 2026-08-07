@@ -233,6 +233,41 @@ while true; do
     fi
   fi
 
+  # The server reads whitelist.json once, at boot. Without this, editing
+  # server/whitelist.json would not take effect until the next handoff — up to
+  # 5.4 hours of a player being unable to join for no visible reason.
+  if (( elapsed % 120 < 10 )); then
+    if curl -fsSL --max-time 15 \
+         "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/server/whitelist.json" \
+         -o "$RUN_DIR/.whitelist.remote" 2>/dev/null; then
+      if ! cmp -s "$RUN_DIR/.whitelist.remote" "$RUN_DIR/.whitelist.seen" 2>/dev/null; then
+        log "whitelist changed upstream — merging and reloading"
+        python3 - "$RUN_DIR/.whitelist.remote" "$RUN_DIR/whitelist.json" <<'PY'
+import json, sys
+def load(p):
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, list) else []
+    except Exception:
+        return []
+merged, seen = [], set()
+for e in load(sys.argv[1]) + load(sys.argv[2]):
+    if not isinstance(e, dict):
+        continue
+    k = (e.get("uuid") or e.get("name") or "").lower()
+    if k and k not in seen:
+        seen.add(k); merged.append(e)
+with open(sys.argv[2], "w", encoding="utf-8") as f:
+    json.dump(merged, f, indent=2)
+print(f"whitelist now {len(merged)} entries")
+PY
+        $RCON "whitelist reload" >/dev/null 2>&1 || warn "whitelist reload failed"
+        cp "$RUN_DIR/.whitelist.remote" "$RUN_DIR/.whitelist.seen"
+      fi
+    fi
+  fi
+
   if (( SECONDS - last_save >= AUTOSAVE_SECONDS )); then
     last_save=$SECONDS
     log "autosave"
