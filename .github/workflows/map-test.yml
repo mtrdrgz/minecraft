@@ -71,20 +71,27 @@ jobs:
           MARKER: ${{ steps.tunnel.outputs.marker }}
         run: |
           set -uo pipefail
-          echo "waiting for the origin rule to take effect..."
+          # Verified through workers.dev, not map.mtrdrgzcid.com: the custom
+          # domain sits behind the zone WAF, which challenges this runner's
+          # datacenter IP with "Just a moment..." and returns 403 regardless of
+          # whether the Worker works. Same Worker, same KV read, same Host
+          # rewrite -- only the zone rules are skipped.
+          WORKER="https://mtrdrgzcid-minecraft-map.mateorodriguezcid.workers.dev"
+          echo "worker sees: $(curl -sS --max-time 20 "$WORKER/__status")"
+          echo "waiting for the proxy to serve this run's marker..."
           ok=0
           for i in $(seq 1 20); do
-            body="$(curl -fsS --max-time 20 "https://map.mtrdrgzcid.com/" 2>/dev/null || true)"
-            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://map.mtrdrgzcid.com/" || true)"
+            body="$(curl -fsS --max-time 20 "$WORKER/" 2>/dev/null || true)"
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$WORKER/" || true)"
             echo "  attempt $i: HTTP $code"
             if printf '%s' "$body" | grep -q "$MARKER"; then ok=1; break; fi
             sleep 10
           done
           if [ "$ok" = 1 ]; then
-            echo "PASS: map.mtrdrgzcid.com served this run's marker ($MARKER)"
+            echo "PASS: the Worker proxied this run's marker ($MARKER) from a fresh tunnel"
           else
             echo "FAIL: the domain did not serve the marker"
-            echo "--- last response ---"; curl -sS -i --max-time 20 "https://map.mtrdrgzcid.com/" | head -30
+            echo "--- last response ---"; curl -sS -i --max-time 20 "$WORKER/" | head -30
             exit 1
           fi
 
