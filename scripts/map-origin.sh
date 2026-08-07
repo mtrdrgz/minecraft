@@ -37,7 +37,11 @@ RULE_REF="minecraft_map_tunnel"
 # Origin Rule replaces the destination before any origin connection is made.
 PLACEHOLDER_IP="192.0.2.1"
 
-log() { printf '\033[95m[map-dns]\033[0m %s\n' "$*"; }
+# Logs go to stderr, not stdout: several functions here return their value via
+# stdout (ruleset_id, the python helpers), and a log line written to stdout gets
+# captured into the value. That produced a ruleset id with a log message glued
+# to it and a nonsensical API URL.
+log() { printf '\033[95m[map-dns]\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[31m[map-dns] FATAL:\033[0m %s\n' "$*" >&2; exit 1; }
 
 cf() {
