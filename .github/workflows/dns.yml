@@ -1,0 +1,26 @@
+name: dns
+
+# Manually repoint minecraft.mtrdrgzcid.com at a given relay host.
+#
+# Useful when a shift is already serving and you need to fix or re-apply the
+# DNS records without restarting the server and losing the session.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Relay hostname to point at, e.g. annex-unskilled.na.e4mc.link'
+        required: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Update DNS
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+        run: |
+          chmod +x scripts/dns-update.sh
+          ./scripts/dns-update.sh minecraft.mtrdrgzcid.com "${{ github.event.inputs.target }}"

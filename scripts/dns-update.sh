@@ -33,39 +33,75 @@ cf() {
   curl "${args[@]}" "$API$path"
 }
 
-# Minecraft is raw TCP, which Cloudflare's proxy cannot carry (public hostnames
-# on Tunnel are HTTP/HTTPS only; arbitrary TCP needs Spectrum). The record must
-# stay unproxied or clients get an HTTP endpoint and fail to connect.
-payload() {
+# An SRV record is mandatory here, not a nicety. e4mc's relay is a virtual host:
+# it routes on the hostname inside the Minecraft handshake, not on IP or port.
+# A plain CNAME therefore CANNOT work — the vanilla client puts whatever the
+# player typed in the handshake, the relay does not recognise it, and answers
+# "Unknown server. Check address and try again."
+#
+# With an SRV record the client connects to the SRV *target* and sends that
+# target hostname in the handshake, which is exactly what the relay expects.
+# The CNAME is still written so the name resolves for anything that ignores SRV.
+SRV_NAME="_minecraft._tcp.${FQDN}"
+
+upsert() {
+  local type="$1" name="$2" body="$3" desc="$4"
+  local existing record_id current
+
+  existing="$(cf GET "/zones/$CF_ZONE_ID/dns_records?type=$type&name=$name")" \
+    || die "Cloudflare API unreachable or token rejected"
+
+  record_id="$(printf '%s' "$existing" | python3 -c \
+    'import json,sys; r=json.load(sys.stdin).get("result") or []; print(r[0]["id"] if r else "")')"
+  current="$(printf '%s' "$existing" | python3 -c \
+    'import json,sys; r=json.load(sys.stdin).get("result") or []
+print((r[0].get("data") or {}).get("target") or r[0].get("content","") if r else "")')"
+
+  if [[ -n "$record_id" && "$current" == "$TARGET" ]]; then
+    log "$type $name already points at $TARGET"
+    return 0
+  fi
+
+  local out
+  if [[ -n "$record_id" ]]; then
+    log "updating $type $name: ${current:-<none>} -> $TARGET"
+    out="$(cf PUT "/zones/$CF_ZONE_ID/dns_records/$record_id" "$body")" \
+      || die "failed to update $type $name"
+  else
+    log "creating $type $name -> $TARGET"
+    out="$(cf POST "/zones/$CF_ZONE_ID/dns_records" "$body")" \
+      || die "failed to create $type $name"
+  fi
+
+  local ok
+  ok="$(printf '%s' "$out" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin).get("success"))')"
+  [[ "$ok" == "True" ]] || die "Cloudflare rejected the $type change: $out"
+  log "$desc"
+}
+
+srv_body() {
+  python3 - "$SRV_NAME" "$FQDN" "$TARGET" "$TTL" <<'PY'
+import json, sys
+name, host, target, ttl = sys.argv[1:5]
+print(json.dumps({
+    "type": "SRV",
+    "name": name,
+    "ttl": int(ttl),
+    "data": {
+        "service": "_minecraft", "proto": "_tcp", "name": host,
+        "priority": 0, "weight": 0, "port": 25565, "target": target,
+    },
+}))
+PY
+}
+
+# Must stay unproxied: Cloudflare's proxy carries HTTP/HTTPS only, and Minecraft
+# is raw TCP. Proxying silently breaks every connection.
+cname_body() {
   printf '{"type":"CNAME","name":"%s","content":"%s","ttl":%s,"proxied":false}' \
     "$FQDN" "$TARGET" "$TTL"
 }
 
-log "resolving existing record for $FQDN"
-existing="$(cf GET "/zones/$CF_ZONE_ID/dns_records?type=CNAME&name=$FQDN")" \
-  || die "Cloudflare API unreachable or token rejected"
-
-record_id="$(printf '%s' "$existing" \
-  | python3 -c 'import json,sys; r=json.load(sys.stdin).get("result") or []; print(r[0]["id"] if r else "")')"
-current="$(printf '%s' "$existing" \
-  | python3 -c 'import json,sys; r=json.load(sys.stdin).get("result") or []; print(r[0]["content"] if r else "")')"
-
-if [[ -n "$record_id" && "$current" == "$TARGET" ]]; then
-  log "$FQDN already points at $TARGET — nothing to do"
-  exit 0
-fi
-
-if [[ -n "$record_id" ]]; then
-  log "updating $FQDN: $current -> $TARGET"
-  out="$(cf PUT "/zones/$CF_ZONE_ID/dns_records/$record_id" "$(payload)")" \
-    || die "failed to update record $record_id"
-else
-  log "creating $FQDN -> $TARGET"
-  out="$(cf POST "/zones/$CF_ZONE_ID/dns_records" "$(payload)")" \
-    || die "failed to create record"
-fi
-
-ok="$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("success"))')"
-[[ "$ok" == "True" ]] || die "Cloudflare rejected the change: $out"
-
-log "$FQDN -> $TARGET (TTL ${TTL}s, unproxied)"
+upsert SRV   "$SRV_NAME" "$(srv_body)"   "SRV $SRV_NAME -> $TARGET:25565 (TTL ${TTL}s)"
+upsert CNAME "$FQDN"     "$(cname_body)" "CNAME $FQDN -> $TARGET (TTL ${TTL}s, unproxied)"
