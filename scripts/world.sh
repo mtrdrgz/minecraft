@@ -144,8 +144,11 @@ stage() {
       done < "$RUNTIME_EXCLUDE"
     fi
 
+    # session.lock is a runtime mutex the server rewrites on every boot. Carrying
+    # it between shifts is pure churn and risks a spurious "world is in use".
     rsync_ok -a --delete \
       --exclude-from="$excludes" \
+      --exclude='session.lock' \
       --filter='P *.bigfile/' \
       "${protect[@]}" \
       "$RUN_DIR/world/" "$WORLDGIT/world/" || { rm -f "$excludes"; return 1; }
