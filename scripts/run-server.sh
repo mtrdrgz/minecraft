@@ -179,16 +179,22 @@ if [[ -n "${PLAYIT_SECRET:-}" && -x "$HOME/bin/playitd" ]]; then
     warn "playit agent exited immediately — players cannot connect. Log:"
     tail -30 "$RUN_DIR/playit.log" >&2
   else
-    # The endpoint is stable, so it is configured rather than scraped from the
-    # agent's log, whose format is not a stable interface.
-    if [[ -n "${PLAYIT_ADDRESS:-}" ]]; then
-      PUBLIC_HOST="${PLAYIT_ADDRESS%%:*}"
-      [[ "$PLAYIT_ADDRESS" == *:* ]] && PUBLIC_PORT="${PLAYIT_ADDRESS##*:}"
+    # Ask playit for the agent's own endpoint rather than reading it from a repo
+    # variable, which would silently rot if the tunnel were ever recreated.
+    # PLAYIT_ADDRESS still wins if set, as an escape hatch.
+    ADDR="${PLAYIT_ADDRESS:-}"
+    if [[ -z "$ADDR" ]]; then
+      ADDR="$(python3 "$REPO_ROOT/tools/playit-address.py" 2>"$RUN_DIR/playit-addr.err")" || ADDR=""
+    fi
+
+    if [[ -n "$ADDR" ]]; then
+      PUBLIC_HOST="${ADDR%%:*}"
+      [[ "$ADDR" == *:* ]] && PUBLIC_PORT="${ADDR##*:}"
       log "playit endpoint: $PUBLIC_HOST:$PUBLIC_PORT"
       update_dns "$PUBLIC_HOST" "$PUBLIC_PORT"
     else
-      warn "PLAYIT_ADDRESS is not set — cannot publish DNS."
-      warn "Set it to the address playit assigned, e.g. abc-def.gl.at.ply.gg:41234"
+      warn "could not determine the playit endpoint:"
+      sed 's/^/  /' "$RUN_DIR/playit-addr.err" >&2 2>/dev/null || true
     fi
   fi
 elif [[ -n "$E4MC_DOMAIN" ]]; then
