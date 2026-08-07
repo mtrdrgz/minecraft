@@ -43,7 +43,7 @@ jobs:
           "$HOME/bin/playitd" --help 2>&1 | head -20
 
           echo "running agent for ${SECS}s"
-          timeout "${SECS}" "$HOME/bin/playitd" --secret "$PLAYIT_SECRET" > playit.log 2>&1
+          timeout "${SECS}" "$HOME/bin/playitd" --socket-path /tmp/playit.sock \n            --secret "$PLAYIT_SECRET" > playit.log 2>&1
           rc=$?
           echo "agent exited rc=$rc (124 = timeout fired, which is success here)"
           echo "--- agent log ---"

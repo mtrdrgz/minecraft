@@ -172,7 +172,9 @@ PUBLIC_PORT="25565"
 
 if [[ -n "${PLAYIT_SECRET:-}" && -x "$HOME/bin/playitd" ]]; then
   log "starting playit tunnel"
-  "$HOME/bin/playitd" --secret "$PLAYIT_SECRET" > "$RUN_DIR/playit.log" 2>&1 &
+  # playitd binds an IPC socket; its default path does not exist on a GitHub
+  # runner and it dies instantly with "Failed to bind to socket".
+  "$HOME/bin/playitd" --socket-path "$RUN_DIR/playit.sock" \n    --secret "$PLAYIT_SECRET" > "$RUN_DIR/playit.log" 2>&1 &
   PLAYIT_PID=$!
   sleep 10
   if ! kill -0 "$PLAYIT_PID" 2>/dev/null; then
