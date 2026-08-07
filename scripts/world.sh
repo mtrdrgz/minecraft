@@ -56,10 +56,44 @@ cmd_restore() {
   for f in whitelist.json banned-players.json banned-ips.json usercache.json ops.json; do
     [[ -f "$WORLDGIT/state/$f" ]] && cp "$WORLDGIT/state/$f" "$RUN_DIR/$f"
   done
+
+  # Baseline for assert_world_sane. Written after restore so it reflects what
+  # we actually handed the server, not what the branch happened to contain.
+  find "$RUN_DIR/world" -name '*.mca' 2>/dev/null | wc -l > "${RESTORE_MANIFEST:-$HOME/.mc-restore-manifest}"
+  log "restored $(cat "${RESTORE_MANIFEST:-$HOME/.mc-restore-manifest}") region files"
+  return 0
+}
+
+# Every push to the world branch is destructive by design (squash force-pushes).
+# If a restore silently failed, or the server wiped the run dir, an unguarded
+# shutdown would force-push an empty world over real progress. Refuse to push a
+# world that lost its level.dat or most of its region files.
+assert_world_sane() {
+  local manifest="${RESTORE_MANIFEST:-$HOME/.mc-restore-manifest}"
+  local mca
+  mca="$(find "$RUN_DIR/world" -name '*.mca' 2>/dev/null | wc -l)"
+
+  if [[ ! -f "$RUN_DIR/world/level.dat" ]]; then
+    log "REFUSING TO PUSH: $RUN_DIR/world/level.dat is missing."
+    log "The world branch has been left untouched. Investigate before rerunning."
+    return 1
+  fi
+
+  if [[ -f "$manifest" ]]; then
+    local before threshold
+    before="$(cat "$manifest")"
+    threshold=$(( before / 2 ))
+    if (( before > 0 && mca < threshold )); then
+      log "REFUSING TO PUSH: region count collapsed ($before -> $mca .mca files)."
+      log "The world branch has been left untouched. Investigate before rerunning."
+      return 1
+    fi
+  fi
   return 0
 }
 
 stage() {
+  assert_world_sane || return 1
   mkdir -p "$WORLDGIT/state"
   [[ -d "$RUN_DIR/world" ]] && rsync -a --delete "$RUN_DIR/world/" "$WORLDGIT/world/"
   for f in whitelist.json banned-players.json banned-ips.json usercache.json ops.json; do

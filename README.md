@@ -52,6 +52,29 @@ The world lives on an orphan `world` branch, not in `main` and not in a tarball.
 
 Worst-case loss on an ungraceful runner kill is one autosave interval, 10 minutes.
 
+Because every push to `world` is destructive by design (the squash force-pushes),
+`world.sh` refuses to push a world whose `level.dat` is missing or whose region
+count has collapsed to under half of what was restored. A failed restore
+therefore leaves the branch untouched instead of overwriting real progress with
+an empty world.
+
+### The world
+
+The `world` branch was imported from the singleplayer save **Definitivo**
+(`ModrinthApp/profiles/Create+/saves/Definitivo`), MC 1.21.1 / NeoForge —
+1,414 files, ~1,146 MB on disk, ~384 MB packed.
+
+Two files were excluded because they exceed GitHub's hard 100 MB per-blob limit:
+`data/DistantHorizons.sqlite` (2,245 MB) and `DIM-1/data/DistantHorizons.sqlite`
+(171 MB). Distant Horizons is a client-side LOD cache, is not in the server mod
+set, and each player regenerates their own — nothing is lost. `session.lock` is
+also excluded; the server recreates it.
+
+The original save on your PC is untouched — it was copied, not moved.
+
+Because the repo is public, the `world` branch is publicly downloadable. The
+whitelist protects the *server*, not the world download.
+
 ### Mod filtering
 
 The `.mrpack` marks all 176 mods `server: required`, which is wrong — 51 are
