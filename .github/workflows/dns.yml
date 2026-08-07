@@ -8,8 +8,12 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: 'Relay hostname to point at, e.g. annex-unskilled.na.e4mc.link'
+        description: 'Relay hostname, e.g. katherine-gould.tun.ply.gg'
         required: true
+      port:
+        description: 'Public port (playit free tier assigns a random one)'
+        required: false
+        default: '25565'
 
 jobs:
   update:
@@ -23,4 +27,4 @@ jobs:
           CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
         run: |
           chmod +x scripts/dns-update.sh
-          ./scripts/dns-update.sh minecraft.mtrdrgzcid.com "${{ github.event.inputs.target }}"
+          ./scripts/dns-update.sh minecraft.mtrdrgzcid.com "${{ github.event.inputs.target }}" "${{ github.event.inputs.port || '25565' }}"

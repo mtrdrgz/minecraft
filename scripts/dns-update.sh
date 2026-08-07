@@ -61,11 +61,18 @@ upsert() {
   # update when a relay keeps its hostname but moves to a different port.
   local want
   if [[ "$type" == "SRV" ]]; then
+    # No f-string and no escaped quotes here: this snippet lives inside a
+    # single-quoted bash string, so a backslash reaches Python literally and a
+    # backslash inside an f-string expression is a SyntaxError. That silently
+    # broke every SRV update.
     current="$(printf '%s' "$existing" | python3 -c \
       'import json,sys
 r = json.load(sys.stdin).get("result") or []
-d = (r[0].get("data") or {}) if r else {}
-print(f"{d.get(\"target\",\"\")}:{d.get(\"port\",\"\")}" if r else "")')"
+if r:
+    d = r[0].get("data") or {}
+    print(str(d.get("target","")) + ":" + str(d.get("port","")))
+else:
+    print("")')"
     want="$TARGET:$PORT"
   else
     current="$(printf '%s' "$existing" | python3 -c \
