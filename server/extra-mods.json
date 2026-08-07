@@ -18,6 +18,15 @@
       "size": 128621,
       "sha512": "7f5998b5b06f58247afc70e95024f35a162c96c5d8ad537f8da44da709dfae4e064f3ea295540619a69da8afa256d2268b31acbbc47a12392a63cae4b628c725",
       "why": "Real ore obfuscation: the server sends fake blocks so xray sees nothing. server_side:required, client_side:unsupported, so players change nothing."
+    },
+    {
+      "slug": "minertrack",
+      "title": "MinerTrack Anti-XRay",
+      "path": "mods/MinerTrack-2.1.0.1+neoforge.jar",
+      "url": "https://cdn.modrinth.com/data/O3VQnhG2/versions/qlyryuqY/MinerTrack-2.1.0.1%2Bneoforge.jar",
+      "size": 2505684,
+      "sha512": "28e0a4b6ce2d7db306c786e97d091e5b474bff34d354d2bcb557fdbc43e203e0cf649e8703aa659951f044b17e7fa2d9751983b1c197f91aaf6055abc7652a84",
+      "why": "Behavioural xray detection, complementing AntiXray's obfuscation. Native neoforge build."
     }
   ]
 }
