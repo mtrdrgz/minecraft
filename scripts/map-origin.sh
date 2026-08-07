@@ -113,15 +113,19 @@ for r in keep:
     r.pop("id", None); r.pop("version", None); r.pop("last_updated", None); r.pop("ref", None)
 print(json.dumps(keep))')"
 
+  # Heredoc rather than python3 -c: the rule expression needs both quote styles,
+  # and single quotes cannot be nested inside a single-quoted bash string.
   local body
-  body="$(TARGET="$TARGET" FQDN="$FQDN" RULE_REF="$RULE_REF" OTHERS="$others" python3 -c '
+  body="$(TARGET="$TARGET" FQDN="$FQDN" RULE_REF="$RULE_REF" OTHERS="$others" python3 <<'PY'
 import json, os
 others = json.loads(os.environ["OTHERS"])
-target, fqdn, ref = os.environ["TARGET"], os.environ["FQDN"], os.environ["RULE_REF"]
+target = os.environ["TARGET"]
+fqdn = os.environ["FQDN"]
+ref = os.environ["RULE_REF"]
 mine = {
     "ref": ref,
     "description": ref + ": route the map hostname to the current quick tunnel",
-    "expression": f\'(http.host eq "{fqdn}")\',
+    "expression": '(http.host eq "%s")' % fqdn,
     "action": "route",
     "action_parameters": {
         # host_header must match origin.host: trycloudflare vhosts on it and
@@ -131,11 +135,16 @@ mine = {
     },
     "enabled": True,
 }
-print(json.dumps({"rules": others + [mine]}))')"
+print(json.dumps({"rules": others + [mine]}))
+PY
+)"
 
   cf PUT "/zones/$CF_ZONE_ID/rulesets/$rsid" "$body" >/dev/null \
     || die "Cloudflare rejected the origin rule"
-  log "$FQDN now routes to $TARGET (kept ${#others} other rule bytes intact)"
+
+  local kept
+  kept="$(printf '%s' "$others" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+  log "$FQDN now routes to $TARGET ($kept other origin rule(s) preserved)"
 }
 
 ensure_record
