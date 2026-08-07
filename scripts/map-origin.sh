@@ -44,12 +44,35 @@ PLACEHOLDER_IP="192.0.2.1"
 log() { printf '\033[95m[map-dns]\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[31m[map-dns] FATAL:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# No -f: it makes curl discard the response body on an HTTP error, which is
+# exactly where Cloudflare explains what it rejected. Success is judged from the
+# JSON envelope instead, and the body is available to the caller either way.
 cf() {
   local method="$1" path="$2" body="${3:-}"
-  local args=(-fsS -X "$method" -H "Authorization: Bearer $CF_API_TOKEN"
+  local args=(-sS -X "$method" -H "Authorization: Bearer $CF_API_TOKEN"
               -H "Content-Type: application/json")
   [[ -n "$body" ]] && args+=(--data "$body")
   curl "${args[@]}" "$API$path"
+}
+
+cf_ok() {
+  python3 -c 'import json,sys
+try:
+    print("yes" if json.load(sys.stdin).get("success") else "no")
+except Exception:
+    print("no")'
+}
+
+cf_errors() {
+  python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("unparseable response"); raise SystemExit
+for e in (d.get("errors") or []):
+    print("  code %s: %s" % (e.get("code"), e.get("message")))
+    for s in (e.get("error_chain") or []):
+        print("    -> %s: %s" % (s.get("code"), s.get("message")))'
 }
 
 jqp() { python3 -c "$1"; }
@@ -88,7 +111,8 @@ print(str(r[0].get("proxied", False)).lower() if r else "")')"
 # ------------------------------------------------------------- origin rule ----
 ruleset_id() {
   local out
-  if out="$(cf GET "/zones/$CF_ZONE_ID/rulesets/phases/$PHASE/entrypoint" 2>/dev/null)"; then
+  out="$(cf GET "/zones/$CF_ZONE_ID/rulesets/phases/$PHASE/entrypoint" 2>/dev/null)"
+  if [[ "$(printf '%s' "$out" | cf_ok)" == "yes" ]]; then
     printf '%s' "$out" | jqp 'import json,sys
 print((json.load(sys.stdin).get("result") or {}).get("id",""))'
     return 0
@@ -143,8 +167,15 @@ print(json.dumps({"rules": others + [mine]}))
 PY
 )"
 
-  cf PUT "/zones/$CF_ZONE_ID/rulesets/$rsid" "$body" >/dev/null \
-    || die "Cloudflare rejected the origin rule"
+  local resp
+  resp="$(cf PUT "/zones/$CF_ZONE_ID/rulesets/$rsid" "$body")"
+  if [[ "$(printf '%s' "$resp" | cf_ok)" != "yes" ]]; then
+    log "Cloudflare rejected the origin rule:"
+    printf '%s' "$resp" | cf_errors >&2
+    log "rule sent was:"
+    printf '%s\n' "$body" | head -c 1200 >&2
+    die "origin rule update failed"
+  fi
 
   local kept
   kept="$(printf '%s' "$others" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
