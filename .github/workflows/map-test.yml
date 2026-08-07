@@ -34,8 +34,7 @@ jobs:
       - name: Serve a placeholder and point the domain at it
         id: tunnel
         env:
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+          MAP_UPDATE_TOKEN: ${{ secrets.MAP_UPDATE_TOKEN }}
         run: |
           set -Eeuo pipefail
           chmod +x scripts/*.sh
@@ -64,8 +63,8 @@ jobs:
           curl -fsS --retry 5 --retry-delay 2 "https://$HOST/" | tee /tmp/direct.txt
           grep -q "$MARKER" /tmp/direct.txt || { echo "tunnel did not serve the marker"; exit 1; }
 
-          echo "--- pointing map.mtrdrgzcid.com at it ---"
-          ./scripts/map-origin.sh map.mtrdrgzcid.com "$HOST"
+          echo "--- telling the Worker about this tunnel ---"
+          ./scripts/map-publish.sh map.mtrdrgzcid.com "$HOST"
 
       - name: Verify the domain serves it
         env:
