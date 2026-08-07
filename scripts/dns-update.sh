@@ -119,12 +119,22 @@ print(json.dumps({
 PY
 }
 
-# Must stay unproxied: Cloudflare's proxy carries HTTP/HTTPS only, and Minecraft
-# is raw TCP. Proxying silently breaks every connection.
-cname_body() {
-  printf '{"type":"CNAME","name":"%s","content":"%s","ttl":%s,"proxied":false}' \
-    "$FQDN" "$TARGET" "$TTL"
+# A CNAME alongside the SRV is actively harmful here, not a harmless fallback.
+# It resolves the bare domain to the relay's IP, and playit relays host many
+# customers' tunnels — port 25565 on that IP is open but belongs to someone
+# else. A client that does not use the SRV therefore connects to a port with no
+# server behind it and hangs on "connecting" forever instead of failing fast.
+# With SRV only, the port always comes from the record.
+delete_record() {
+  local type="$1" name="$2"
+  local existing record_id
+  existing="$(cf GET "/zones/$CF_ZONE_ID/dns_records?type=$type&name=$name")" || return 0
+  record_id="$(printf '%s' "$existing" | python3 -c \
+    'import json,sys; r=json.load(sys.stdin).get("result") or []; print(r[0]["id"] if r else "")')"
+  [[ -z "$record_id" ]] && return 0
+  cf DELETE "/zones/$CF_ZONE_ID/dns_records/$record_id" >/dev/null \
+    && log "removed stray $type $name (it made non-SRV clients hang on the wrong port)"
 }
 
-upsert SRV   "$SRV_NAME" "$(srv_body)"   "SRV $SRV_NAME -> $TARGET:$PORT (TTL ${TTL}s)"
-upsert CNAME "$FQDN"     "$(cname_body)" "CNAME $FQDN -> $TARGET (TTL ${TTL}s, unproxied)"
+upsert SRV "$SRV_NAME" "$(srv_body)" "SRV $SRV_NAME -> $TARGET:$PORT (TTL ${TTL}s)"
+delete_record CNAME "$FQDN"
