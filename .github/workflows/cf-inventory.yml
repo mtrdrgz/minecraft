@@ -1,8 +1,8 @@
 name: cf-inventory
 
 # Read-only dump of the zone's DNS records and Worker routes. Nothing is
-# modified; it exists because the Cloudflare token lives in Actions secrets and
-# not on a laptop.
+# modified. It runs on a runner because the Cloudflare token lives in Actions
+# secrets rather than on a laptop.
 on:
   workflow_dispatch:
 
@@ -11,40 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: List DNS records and worker routes
+      - uses: actions/checkout@v7
+
+      - name: Dump DNS records and worker routes
         env:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
-        run: |
-          set -Eeuo pipefail
-          api() { curl -sS -H "Authorization: Bearer $CF_API_TOKEN" \
-                    -H "Content-Type: application/json" "https://api.cloudflare.com/client/v4$1"; }
-
-          echo "===== DNS RECORDS ====="
-          api "/zones/$CF_ZONE_ID/dns_records?per_page=200" | python3 -c '
-import json,sys
-d=json.load(sys.stdin)
-if not d.get("success"):
-    print("ERROR:", d.get("errors")); raise SystemExit(1)
-rows=sorted(d["result"], key=lambda r:(r["type"], r["name"]))
-print(f"{\"TYPE\":<7} {\"NAME\":<44} {\"PROXY\":<6} CONTENT")
-for r in rows:
-    proxy = "on" if r.get("proxied") else "-"
-    content = r.get("content","")
-    if r["type"] == "SRV":
-        dd = r.get("data") or {}
-        content = f'"'"'{dd.get("target","")}:{dd.get("port","")}'"'"'
-    print(f"{r[\"type\"]:<7} {r[\"name\"]:<44} {proxy:<6} {content}")
-print()
-print("total:", len(rows))'
-
-          echo
-          echo "===== WORKER ROUTES ON THIS ZONE ====="
-          api "/zones/$CF_ZONE_ID/workers/routes" | python3 -c '
-import json,sys
-d=json.load(sys.stdin)
-if not d.get("success"):
-    print("(no access or none):", d.get("errors")); raise SystemExit(0)
-for r in d.get("result") or []:
-    print(f"  {r.get(\"pattern\"):<45} -> {r.get(\"script\") or \"(none)\"}")
-if not (d.get("result") or []): print("  (none)")'
+        run: python3 tools/cf-inventory.py
