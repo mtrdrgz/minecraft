@@ -123,6 +123,9 @@ graceful_stop() {
   if [[ -n "${CLOUDFLARED_PID:-}" ]] && kill -0 "$CLOUDFLARED_PID" 2>/dev/null; then
     kill "$CLOUDFLARED_PID" 2>/dev/null || true
   fi
+  if [[ -n "${PANEL_PID:-}" ]] && kill -0 "$PANEL_PID" 2>/dev/null; then
+    kill "$PANEL_PID" 2>/dev/null || true
+  fi
 }
 trap graceful_stop EXIT INT TERM
 
@@ -267,6 +270,18 @@ start_map_tunnel() {
 
 if [[ "${BLUEMAP_ENABLED:-false}" == "true" ]]; then
   start_map_tunnel || warn "map tunnel unavailable this shift"
+fi
+
+# --- web panel agent -------------------------------------------------------
+# Publishes status and executes commands queued from mtrdrgzcid.com/mc. Runs as
+# its own loop so console latency does not depend on the main loop's 10s tick.
+PANEL_PID=""
+if [[ -n "${MAP_UPDATE_TOKEN:-}" && -n "${PANEL_HOST:-}" ]]; then
+  log "starting web panel agent"
+  SHIFT_END_EPOCH=$(( $(date +%s) + SERVE_SECONDS ))   PUBLIC_ADDRESS="${PUBLIC_HOST}:${PUBLIC_PORT}"   PANEL_HOST="$PANEL_HOST"     "$REPO_ROOT/scripts/panel-agent.sh" > "$RUN_DIR/panel.log" 2>&1 &
+  PANEL_PID=$!
+else
+  warn "MAP_UPDATE_TOKEN/PANEL_HOST unset — web panel will show no data"
 fi
 
 $RCON "say §aServer is online. This shift ends in ${SERVE_MINUTES} minutes." >/dev/null 2>&1 || true

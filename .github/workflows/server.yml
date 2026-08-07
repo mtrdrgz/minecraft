@@ -149,6 +149,7 @@ jobs:
           MAP_HOSTNAME: map.mtrdrgzcid.com
           MAP_PUBLISH_HOST: mtrdrgzcid-minecraft-map.mateorodriguezcid.workers.dev
           MAP_UPDATE_TOKEN: ${{ secrets.MAP_UPDATE_TOKEN }}
+          PANEL_HOST: mtrdrgzcid-mc-panel.mateorodriguezcid.workers.dev
           SERVE_MINUTES: ${{ github.event.inputs.serve_minutes || '325' }}
           AUTOSAVE_MINUTES: '10'
           HANDOFF_LEAD_MINUTES: '12'

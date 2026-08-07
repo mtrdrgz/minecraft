@@ -1,0 +1,25 @@
+{
+  "name": "mtrdrgzcid-mc-panel",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-01",
+
+  // A path route, not a custom domain. The site Worker keeps mtrdrgzcid.com/*
+  // and this one takes /mc*; Cloudflare sends each request to the most specific
+  // matching route, so the ports site is untouched.
+  "routes": [
+    { "pattern": "mtrdrgzcid.com/mc*", "zone_name": "mtrdrgzcid.com" }
+  ],
+
+  // The runner publishes status and drains the command queue here, because
+  // requests to mtrdrgzcid.com pass through the zone WAF, which challenges
+  // datacenter IPs with a "Just a moment..." interstitial.
+  "workers_dev": true,
+
+  // Same namespace the map Worker uses: tunnel_host is written there and read
+  // here, and the status and command queue live alongside it.
+  "kv_namespaces": [
+    { "binding": "MAP_STATE", "id": "4f2b4185afea4a568f002db4a01aeca2" }
+  ],
+
+  "observability": { "enabled": true }
+}
