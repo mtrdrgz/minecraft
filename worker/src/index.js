@@ -40,23 +40,51 @@ export default {
     // Let the origin negotiate its own encoding rather than forwarding ours.
     headers.delete("accept-encoding");
 
-    let upstream;
-    try {
-      upstream = await fetch(target.toString(), {
-        method: request.method,
-        headers,
-        body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
-        redirect: "manual",
-      });
-    } catch (err) {
-      // The usual cause is the shift having ended: the tunnel is gone but KV
-      // still holds its hostname until the next shift reports in.
-      return offline(`The map server is not reachable right now (${err.message}).`);
+    // Measured: a single hop from this Worker to the quick tunnel fails with 530
+    // about half the time, while the same request sent directly from a browser
+    // succeeds every time. The tunnel is fine — the flakiness is on the
+    // Worker-to-tunnel leg, most likely because a quick tunnel registers with a
+    // couple of Cloudflare colos and a Worker can run anywhere. Retrying turns a
+    // ~50% hop into a reliable one; three attempts leave roughly a 1-in-8 chance
+    // of a visible failure, and a fourth makes it 1-in-16.
+    const RETRYABLE = new Set([502, 503, 520, 521, 522, 523, 524, 530]);
+    const idempotent = request.method === "GET" || request.method === "HEAD";
+    const attempts = idempotent ? 4 : 1;
+
+    let upstream = null;
+    let lastError = null;
+
+    for (let i = 0; i < attempts; i++) {
+      try {
+        upstream = await fetch(target.toString(), {
+          method: request.method,
+          headers,
+          body: idempotent ? undefined : request.body,
+          redirect: "manual",
+        });
+        if (!RETRYABLE.has(upstream.status)) break;
+        lastError = `HTTP ${upstream.status}`;
+      } catch (err) {
+        lastError = err.message;
+        upstream = null;
+      }
+      // Short backoff; the failure is a routing miss, not congestion.
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, 150 * (i + 1)));
+    }
+
+    if (!upstream) {
+      // Usually the shift ended: the tunnel is gone but KV still holds its
+      // hostname until the next shift reports in.
+      return offline(`The map server is not reachable right now (${lastError}).`);
     }
 
     if (upstream.status === 403) {
       // trycloudflare's answer to an unknown vhost. Means KV is stale.
       return offline("The map address is stale; it should recover within a few minutes.");
+    }
+
+    if (RETRYABLE.has(upstream.status)) {
+      return offline(`The map server did not answer after ${attempts} attempts (${lastError}).`);
     }
 
     const out = new Headers(upstream.headers);
