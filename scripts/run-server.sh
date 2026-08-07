@@ -199,6 +199,11 @@ START=$SECONDS
 last_save=$SECONDS
 declare -A warned=()
 
+# Three consecutive failed probes, two minutes apart, before giving up on the
+# tunnel. A single failure is usually a transient relay hiccup.
+TUNNEL_FAILS=0
+TUNNEL_FAIL_LIMIT="${TUNNEL_FAIL_LIMIT:-3}"
+
 while true; do
   elapsed=$(( SECONDS - START ))
   remaining=$(( SERVE_SECONDS - elapsed ))
@@ -228,8 +233,27 @@ while true; do
     if [[ -n "$latest" && "$latest" != "$E4MC_DOMAIN" ]]; then
       warn "e4mc domain changed: $E4MC_DOMAIN -> $latest"
       E4MC_DOMAIN="$latest"
+      TUNNEL_FAILS=0
       update_dns "$E4MC_DOMAIN"
       $RCON "say §ePublic address changed. If you disconnect, rejoin in a minute." >/dev/null 2>&1 || true
+    fi
+  fi
+
+  # The tunnel can die silently while the JVM stays perfectly healthy: e4mc's
+  # relay keeps answering, but with "Unknown server", and nobody can join. RCON
+  # cannot see that because the server itself is fine. Probe from outside.
+  if [[ -n "$E4MC_DOMAIN" ]] && (( elapsed % 120 < 10 )); then
+    if python3 "$REPO_ROOT/tools/mcping.py" "$E4MC_DOMAIN" >/dev/null 2>&1; then
+      TUNNEL_FAILS=0
+    else
+      TUNNEL_FAILS=$(( TUNNEL_FAILS + 1 ))
+      warn "tunnel probe failed ($TUNNEL_FAILS/$TUNNEL_FAIL_LIMIT) for $E4MC_DOMAIN"
+      if (( TUNNEL_FAILS >= TUNNEL_FAIL_LIMIT )); then
+        warn "e4mc tunnel is dead and did not recover — ending this shift so a"
+        warn "fresh one takes over with a new session."
+        dispatch_successor
+        break
+      fi
     fi
   fi
 
