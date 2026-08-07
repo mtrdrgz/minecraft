@@ -71,12 +71,45 @@ node tools/regen-lock.mjs audit.json modrinth.index.json server/mods.lock.json
 
 ### 1. playit.gg tunnel
 
-1. Create an account at [playit.gg](https://playit.gg).
-2. Go to **Account → Agents → [New Docker Agent](https://playit.gg/account/agents/new-docker)**
-   and copy the secret key. **It is shown once.**
-3. Add a tunnel: type **Minecraft Java**, local address `127.0.0.1:25565`, bound
-   to that agent.
-4. Note the assigned public address, e.g. `abc-def.gl.at.ply.gg:41234`.
+You need an **agent secret key**. Note that the `/account/agents/new-docker`
+URL cited by most playit tutorials is dead — it 404s. Use one of these instead.
+
+**Option A — desktop app (easiest on Windows).** Install playit from
+[playit.gg/download](https://playit.gg/download) and claim the agent through the
+app. Then print where the secret is stored and open that file:
+
+```bash
+playit-cli secret-path
+```
+
+**Option B — claim from the command line.** This is the flow the CLI actually
+implements (`playit-cli --help`); `exchange` prints the secret to stdout:
+
+```bash
+playit-cli claim generate
+```
+
+Take the code it prints, then:
+
+```bash
+playit-cli claim url <CODE> --name minecraft-actions
+```
+
+Open that URL in a browser and approve the agent. Then:
+
+```bash
+playit-cli claim exchange <CODE>
+```
+
+It blocks until you approve, then prints the secret key.
+
+Either way, finish in the web dashboard at
+[playit.gg/account/agents](https://playit.gg/account/agents): add a tunnel of
+type **Minecraft Java** pointing at local address `127.0.0.1:25565`, bound to
+that agent. Note the assigned public address, e.g. `abc-def.gl.at.ply.gg:41234`.
+
+> The secret is shown once and grants control of your tunnels. Put it straight
+> into the `PLAYIT_SECRET` repo secret; never commit it.
 
 ### 2. Repository secrets
 

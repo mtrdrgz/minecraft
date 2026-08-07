@@ -35,25 +35,38 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
 
-      - name: Cache assembled server tree
+      # restore/save are split rather than using actions/cache directly: the
+      # combined action saves in its post step even when the job failed, which
+      # once cached a half-built tree (NeoForge + mods, no configs). A later run
+      # then saw cache-hit=true, skipped the build, and served the broken tree.
+      - name: Restore assembled server tree
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ env.BUILD_DIR }}
           key: mcbuild-${{ hashFiles('server/mods.lock.json', 'server/server.properties') }}
 
+      # Always run. build-pack.sh is idempotent — it reuses the tree only if its
+      # own .build-complete marker is present, and rebuilds from scratch
+      # otherwise. That marker, not the cache, is the authority on completeness.
       - name: Build server pack
-        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           chmod +x scripts/*.sh
           ./scripts/build-pack.sh
+
+      - name: Save assembled server tree
+        if: success() && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.BUILD_DIR }}
+          key: mcbuild-${{ hashFiles('server/mods.lock.json', 'server/server.properties') }}
 
   serve:
     needs: prep
@@ -66,7 +79,7 @@ jobs:
       group: minecraft-serve
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Reclaim disk
         run: |
@@ -74,20 +87,20 @@ jobs:
                       /usr/local/lib/android "$AGENT_TOOLSDIRECTORY" 2>/dev/null || true
           df -h / | tail -1
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
 
       - name: Restore assembled server tree
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ env.BUILD_DIR }}
           key: mcbuild-${{ hashFiles('server/mods.lock.json', 'server/server.properties') }}
 
-      - name: Build server pack (cache miss fallback)
-        if: steps.cache.outputs.cache-hit != 'true'
+      # Same reasoning as prep: unconditional, guarded by .build-complete.
+      - name: Build server pack (cache miss or incomplete tree)
         run: |
           chmod +x scripts/*.sh
           ./scripts/build-pack.sh
@@ -128,7 +141,7 @@ jobs:
 
       - name: Upload logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: server-logs-${{ github.run_id }}
           path: |
