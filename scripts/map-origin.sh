@@ -187,3 +187,21 @@ RSID="$(ruleset_id)"
 [[ -n "$RSID" ]] || die "could not resolve the $PHASE ruleset id"
 update_rule "$RSID"
 log "done — DNS untouched, only the origin rule changed"
+
+# ---------------------------------------------------------------------------
+# DEAD END, recorded so nobody retries it:
+#
+# This script cannot work on a Free zone. Cloudflare rejects the rule with
+#     "not entitled to use the HostHeader override"
+# because host_header in Origin Rules is a paid feature. And without rewriting
+# the Host, trycloudflare answers 403 — measured directly: the correct host
+# returns 200, map.mtrdrgzcid.com and example.com both return 403.
+#
+# Remaining ways to serve the map on a stable hostname:
+#   1. Cloudflare Worker proxying map.mtrdrgzcid.com to the current tunnel,
+#      reading the hostname from KV. Free, but needs Workers deploy access.
+#   2. Zero Trust named tunnel. Needs a card on file; in exchange the tunnel
+#      hostname is fixed, so nothing rotates and DNS is set once.
+#   3. A second playit tunnel to port 8100. No card, stable endpoint, but the
+#      URL carries a port and is plain HTTP.
+# ---------------------------------------------------------------------------
