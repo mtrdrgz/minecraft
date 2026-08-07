@@ -1,0 +1,98 @@
+name: map-test
+
+# Validates the rotating-quick-tunnel mechanism end to end WITHOUT touching the
+# Minecraft server: it serves a placeholder page instead of BlueMap, points
+# map.mtrdrgzcid.com at it via the Origin Rule, and checks the domain really
+# serves that page.
+#
+# Run it twice: the second run gets a different tunnel hostname, which is the
+# actual thing being tested — that the domain follows a rotating URL.
+on:
+  workflow_dispatch:
+    inputs:
+      hold_seconds:
+        description: 'How long to keep the tunnel up after verifying'
+        required: false
+        default: '60'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install cloudflared
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -fsSL --retry 5 --retry-all-errors \
+            -o "$HOME/bin/cloudflared" \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x "$HOME/bin/cloudflared"
+          "$HOME/bin/cloudflared" --version
+
+      - name: Serve a placeholder and point the domain at it
+        id: tunnel
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+        run: |
+          set -Eeuo pipefail
+          chmod +x scripts/*.sh
+
+          MARKER="map-test-${{ github.run_id }}"
+          mkdir -p /tmp/site
+          echo "$MARKER" > /tmp/site/index.html
+          ( cd /tmp/site && python3 -m http.server 8100 >/dev/null 2>&1 ) &
+          sleep 2
+
+          "$HOME/bin/cloudflared" tunnel --no-autoupdate --url http://127.0.0.1:8100 \
+            > /tmp/cf.log 2>&1 &
+          echo $! > /tmp/cf.pid
+
+          HOST=""
+          for _ in $(seq 1 30); do
+            HOST="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cf.log | head -1 | sed 's|https://||')" || true
+            [ -n "$HOST" ] && break
+            sleep 2
+          done
+          [ -n "$HOST" ] || { echo "no tunnel URL"; cat /tmp/cf.log; exit 1; }
+          echo "tunnel host: $HOST"
+          echo "marker=$MARKER" >> "$GITHUB_OUTPUT"
+
+          echo "--- tunnel serves the marker directly ---"
+          curl -fsS --retry 5 --retry-delay 2 "https://$HOST/" | tee /tmp/direct.txt
+          grep -q "$MARKER" /tmp/direct.txt || { echo "tunnel did not serve the marker"; exit 1; }
+
+          echo "--- pointing map.mtrdrgzcid.com at it ---"
+          ./scripts/map-origin.sh map.mtrdrgzcid.com "$HOST"
+
+      - name: Verify the domain serves it
+        env:
+          MARKER: ${{ steps.tunnel.outputs.marker }}
+        run: |
+          set -uo pipefail
+          echo "waiting for the origin rule to take effect..."
+          ok=0
+          for i in $(seq 1 20); do
+            body="$(curl -fsS --max-time 20 "https://map.mtrdrgzcid.com/" 2>/dev/null || true)"
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "https://map.mtrdrgzcid.com/" || true)"
+            echo "  attempt $i: HTTP $code"
+            if printf '%s' "$body" | grep -q "$MARKER"; then ok=1; break; fi
+            sleep 10
+          done
+          if [ "$ok" = 1 ]; then
+            echo "PASS: map.mtrdrgzcid.com served this run's marker ($MARKER)"
+          else
+            echo "FAIL: the domain did not serve the marker"
+            echo "--- last response ---"; curl -sS -i --max-time 20 "https://map.mtrdrgzcid.com/" | head -30
+            exit 1
+          fi
+
+      - name: Hold the tunnel briefly so you can look at it
+        if: success()
+        run: sleep "${{ github.event.inputs.hold_seconds || '60' }}"
+
+      - name: Tunnel log
+        if: always()
+        run: tail -30 /tmp/cf.log || true
