@@ -13,6 +13,14 @@
 # `commit` (the slow git push), so players feel ~2s, not ~60s.
 set -Eeuo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BIGFILE="$SCRIPT_DIR/bigfile.sh"
+
+# Paths stored on the branch but never handed to the running server. Skipped on
+# restore so handoffs do not pay their download cost, and protected from
+# --delete on save so the server's absence of them does not wipe them.
+RUNTIME_EXCLUDE="${RUNTIME_EXCLUDE:-$SCRIPT_DIR/../server/world-runtime-exclude.txt}"
+
 WORLDGIT="${WORLDGIT:-$HOME/worldgit}"
 RUN_DIR="${RUN_DIR:?RUN_DIR must be set}"
 WORLD_BRANCH="${WORLD_BRANCH:-world}"
@@ -20,9 +28,10 @@ REPO="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set}"
 TOKEN="${GH_TOKEN:?GH_TOKEN must be set}"
 REMOTE="https://x-access-token:${TOKEN}@github.com/${REPO}.git"
 
-# GitHub hard-rejects any blob over 100MB. Region files sit far below this, but
-# a corrupt level.dat or a mod dumping a huge cache would wedge the branch.
-MAX_BLOB_MB=95
+# Files above this are sharded by bigfile.sh rather than committed whole, so
+# GitHub's 100MB per-blob hard limit is not a constraint on world contents.
+BIGFILE_THRESHOLD_MB="${BIGFILE_THRESHOLD_MB:-90}"
+export BIGFILE_THRESHOLD_MB
 
 log() { printf '\033[35m[world]\033[0m %s\n' "$*"; }
 
@@ -50,7 +59,13 @@ cmd_restore() {
 
   mkdir -p "$RUN_DIR"
   if [[ -d "$WORLDGIT/world" ]]; then
-    rsync -a --delete "$WORLDGIT/world/" "$RUN_DIR/world/"
+    local ex=()
+    [[ -f "$RUNTIME_EXCLUDE" ]] && ex=(--exclude-from="$RUNTIME_EXCLUDE")
+    rsync -a --delete "${ex[@]}" "$WORLDGIT/world/" "$RUN_DIR/world/"
+    # Turn any sharded files back into the originals the server expects.
+    # Verifies sha256 and aborts on mismatch rather than handing the server
+    # a silently corrupt region file or database.
+    "$BIGFILE" assemble "$RUN_DIR/world"
   fi
   # Runtime state that must survive a handoff but is not part of the world dir.
   for f in whitelist.json banned-players.json banned-ips.json usercache.json ops.json; do
@@ -95,22 +110,52 @@ assert_world_sane() {
 stage() {
   assert_world_sane || return 1
   mkdir -p "$WORLDGIT/state"
-  [[ -d "$RUN_DIR/world" ]] && rsync -a --delete "$RUN_DIR/world/" "$WORLDGIT/world/"
+
+  if [[ -d "$RUN_DIR/world" ]]; then
+    # Oversized files are copied as shards by bigfile.sh, never whole, so they
+    # are excluded from the plain rsync. Existing shard dirs are protected from
+    # --delete since the source side has the assembled file, not the parts.
+    local excludes
+    excludes="$(mktemp)"
+    find "$RUN_DIR/world" -type f -size +"$(( BIGFILE_THRESHOLD_MB * 1024 * 1024 ))"c \
+      -printf '/%P\n' > "$excludes" 2>/dev/null || true
+
+    # Runtime-excluded paths are absent from RUN_DIR by design, so they must be
+    # protected from --delete or the first save would erase them from the branch.
+    local protect=()
+    if [[ -f "$RUNTIME_EXCLUDE" ]]; then
+      while IFS= read -r pat; do
+        [[ -z "$pat" || "$pat" == \#* ]] && continue
+        protect+=(--filter="P $pat")
+      done < "$RUNTIME_EXCLUDE"
+    fi
+
+    rsync -a --delete \
+      --exclude-from="$excludes" \
+      --filter='P *.bigfile/' \
+      "${protect[@]}" \
+      "$RUN_DIR/world/" "$WORLDGIT/world/"
+    rm -f "$excludes"
+
+    "$BIGFILE" split "$RUN_DIR/world" "$WORLDGIT/world"
+    BIGFILE_PRUNE_KEEP="$RUNTIME_EXCLUDE" "$BIGFILE" prune "$RUN_DIR/world" "$WORLDGIT/world"
+  fi
+
   for f in whitelist.json banned-players.json banned-ips.json usercache.json ops.json; do
     [[ -f "$RUN_DIR/$f" ]] && cp "$RUN_DIR/$f" "$WORLDGIT/state/$f"
   done
   printf '* -text\n' > "$WORLDGIT/.gitattributes"
 
+  # Nothing should reach Git above the limit now; if it does, that is a bug in
+  # the sharding path and must be loud rather than a rejected push later.
   local big
-  big="$(find "$WORLDGIT" -path "$WORLDGIT/.git" -prune -o -type f -size +${MAX_BLOB_MB}M -print 2>/dev/null || true)"
+  big="$(find "$WORLDGIT" -path "$WORLDGIT/.git" -prune -o -type f -size +99M -print 2>/dev/null || true)"
   if [[ -n "$big" ]]; then
-    log "WARNING: files exceed ${MAX_BLOB_MB}MB and will be excluded from the push:"
-    while IFS= read -r f; do
-      log "  $(du -h "$f" | cut -f1)  ${f#$WORLDGIT/}"
-      echo "${f#$WORLDGIT/}" >> "$WORLDGIT/.git/info/exclude"
-      rm -f "$f"
-    done <<< "$big"
+    log "BUG: files still exceed GitHub's 100MB limit after sharding:"
+    while IFS= read -r f; do log "  $(du -h "$f" | cut -f1)  ${f#"$WORLDGIT"/}"; done <<< "$big"
+    return 1
   fi
+  return 0
 }
 
 # Push ladder: a shallow clone can occasionally be refused by the remote, and a

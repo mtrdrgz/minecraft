@@ -1,0 +1,20 @@
+# rsync filter patterns for paths that are STORED on the `world` branch but not
+# handed to the running server.
+#
+# Everything listed here is:
+#   - kept on the branch (protected from --delete when the server saves)
+#   - skipped when restoring the world onto a runner
+#
+# Use it for data you want backed up in the repo but that the server never
+# reads. Each shift would otherwise pay the download cost on every handoff,
+# which directly widens the downtime gap.
+#
+# Patterns are rsync patterns, anchored with a leading / to the world root.
+
+# Distant Horizons LOD cache (~2.4GB). DH is a client-side renderer and is not
+# in the server mod set; in multiplayer each client builds its own per-server
+# cache, so this singleplayer cache is never read by anyone. Stored for backup.
+/data/DistantHorizons.sqlite
+/data/DistantHorizons.sqlite.bigfile
+/*/data/DistantHorizons.sqlite
+/*/data/DistantHorizons.sqlite.bigfile

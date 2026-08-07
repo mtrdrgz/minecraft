@@ -48,7 +48,51 @@ The world lives on an orphan `world` branch, not in `main` and not in a tarball.
 - Each handoff **squashes the branch to a single orphan commit**, so binary
   chunk history never accumulates and the repo stays at roughly one world's size.
 - No Git LFS: its free tier is 1 GB and would be exhausted immediately.
-- Nothing is ever committed larger than 95 MB (GitHub hard-rejects >100 MB).
+- Files over 90 MB are **sharded**, so GitHub's 100 MB per-blob hard limit is
+  not a constraint on world contents. See below.
+
+### Large-file sharding
+
+`scripts/bigfile.sh` splits any file above 90 MB into 48 MB parts and
+reassembles it byte-identically on the runner. An oversized
+`world/data/Foo.sqlite` is stored as:
+
+```
+world/data/Foo.sqlite.bigfile/manifest.json
+world/data/Foo.sqlite.bigfile/part-000
+world/data/Foo.sqlite.bigfile/part-001   ...
+```
+
+- Parts are cut at **fixed offsets**, so an append-mostly file reuses every
+  unchanged part as the same Git blob — only the tail is actually pushed.
+- The manifest records a **sha256 of the whole original**. Reassembly verifies
+  it and aborts rather than handing the server a silently corrupt database.
+- It is written *last*, so a crash mid-split leaves a manifest-less directory
+  that the next run rebuilds instead of trusting.
+- Splitting is skipped when the source's size and mtime are unchanged, so a
+  multi-GB file does not get recut on every 10-minute autosave.
+- The manifest is `key=value`, not JSON, deliberately: this code runs during
+  shutdown and a missing `jq` must never be what loses a save.
+
+`prune` removes shards whose source shrank back under the threshold or was
+deleted — except for paths listed in the runtime-exclude file below.
+
+### Runtime exclusions
+
+`server/world-runtime-exclude.txt` lists paths that are **stored on the branch
+but never handed to the running server**. They are skipped on restore and
+protected from `--delete` on save.
+
+This exists for data worth backing up that the server never reads. Distant
+Horizons' LOD cache (~2.4 GB) is the default entry: DH is a client-side
+renderer, is not in the server mod set, and in multiplayer **each client builds
+its own per-server cache** — so the singleplayer cache is never read by anyone.
+Restoring it every handoff would add gigabytes of download to each changeover
+and directly widen the downtime gap.
+
+`.github/workflows/selftest.yml` verifies all of this on a real runner, because
+rsync filter semantics cannot be tested on a Windows dev box and getting them
+wrong silently deletes world data.
 
 Worst-case loss on an ungraceful runner kill is one autosave interval, 10 minutes.
 
@@ -64,11 +108,11 @@ The `world` branch was imported from the singleplayer save **Definitivo**
 (`ModrinthApp/profiles/Create+/saves/Definitivo`), MC 1.21.1 / NeoForge —
 1,414 files, ~1,146 MB on disk, ~384 MB packed.
 
-Two files were excluded because they exceed GitHub's hard 100 MB per-blob limit:
-`data/DistantHorizons.sqlite` (2,245 MB) and `DIM-1/data/DistantHorizons.sqlite`
-(171 MB). Distant Horizons is a client-side LOD cache, is not in the server mod
-set, and each player regenerates their own — nothing is lost. `session.lock` is
-also excluded; the server recreates it.
+The Distant Horizons caches — `data/DistantHorizons.sqlite` (2,245 MB) and
+`DIM-1/data/DistantHorizons.sqlite` (171 MB) — are stored on the branch as
+shards, since each far exceeds GitHub's 100 MB per-blob limit. They are listed
+in `server/world-runtime-exclude.txt`, so they are backed up but never restored
+to a runner. `session.lock` is excluded entirely; the server recreates it.
 
 The original save on your PC is untouched — it was copied, not moved.
 

@@ -1,0 +1,111 @@
+name: selftest
+
+# Validates the world-persistence plumbing on a real Linux runner, without
+# booting a server. rsync filter semantics in particular cannot be verified on
+# a Windows dev box, and getting them wrong silently deletes world data.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/bigfile.sh'
+      - 'scripts/world.sh'
+      - 'server/world-runtime-exclude.txt'
+      - '.github/workflows/selftest.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: bigfile round-trip, corruption and prune
+        run: |
+          set -Eeuo pipefail
+          chmod +x scripts/*.sh
+          T="$(mktemp -d)"; SRC="$T/src"; DST="$T/dst"
+          mkdir -p "$SRC/data"
+
+          # Incompressible, like a real .sqlite or .mca.
+          head -c 250000000 /dev/urandom > "$SRC/data/Huge.sqlite"
+          BEFORE="$(sha256sum "$SRC/data/Huge.sqlite" | cut -d' ' -f1)"
+
+          ./scripts/bigfile.sh split "$SRC" "$DST"
+          test "$(find "$DST" -type f -size +99M | wc -l)" -eq 0 \
+            || { echo "FAIL: a shard exceeds GitHub's 100MB limit"; exit 1; }
+
+          echo "--- idempotence: second split must reuse, not recut ---"
+          ./scripts/bigfile.sh split "$SRC" "$DST" | tee /tmp/second.log
+          grep -q '0 rebuilt' /tmp/second.log \
+            || { echo "FAIL: split recut an unchanged file"; exit 1; }
+
+          echo "--- round-trip ---"
+          RT="$T/rt"; mkdir -p "$RT"; cp -a "$DST/." "$RT/"
+          ./scripts/bigfile.sh assemble "$RT"
+          AFTER="$(sha256sum "$RT/data/Huge.sqlite" | cut -d' ' -f1)"
+          test "$BEFORE" = "$AFTER" || { echo "FAIL: round-trip corrupted the file"; exit 1; }
+          test "$(find "$RT" -name '*.bigfile' | wc -l)" -eq 0 \
+            || { echo "FAIL: shard dirs left behind after assemble"; exit 1; }
+          echo "round-trip OK ($BEFORE)"
+
+          echo "--- corruption must be rejected ---"
+          C="$T/c"; mkdir -p "$C"; cp -a "$DST/." "$C/"
+          printf 'XXXX' | dd of="$C/data/Huge.sqlite.bigfile/part-002" bs=1 seek=1000 conv=notrunc status=none
+          if ./scripts/bigfile.sh assemble "$C" 2>/dev/null; then
+            echo "FAIL: corrupt shards were accepted"; exit 1
+          fi
+          echo "corruption rejected OK"
+
+      - name: runtime-excluded data survives a server save
+        run: |
+          set -Eeuo pipefail
+          chmod +x scripts/*.sh
+          T="$(mktemp -d)"
+          BRANCH="$T/branch"; RUN="$T/run"
+          mkdir -p "$BRANCH/data/DistantHorizons.sqlite.bigfile" "$BRANCH/region" "$RUN/region"
+
+          echo p > "$BRANCH/data/DistantHorizons.sqlite.bigfile/part-000"
+          printf 'name=DistantHorizons.sqlite\nsize=1\nmtime=1\nsha256=x\nparts=1\npartMB=48\n' \
+            > "$BRANCH/data/DistantHorizons.sqlite.bigfile/manifest.json"
+          echo old > "$BRANCH/region/r.0.0.mca"
+          echo new > "$RUN/region/r.0.0.mca"
+          echo L    > "$RUN/level.dat"
+
+          # This is the real stage() rsync: the server has no DH, and --delete
+          # would wipe it from the branch without the protect filters.
+          PROTECT=()
+          while IFS= read -r pat; do
+            [ -z "$pat" ] && continue
+            case "$pat" in \#*) continue;; esac
+            PROTECT+=(--filter="P $pat")
+          done < server/world-runtime-exclude.txt
+
+          rsync -a --delete --filter='P *.bigfile/' "${PROTECT[@]}" "$RUN/" "$BRANCH/"
+
+          test -f "$BRANCH/data/DistantHorizons.sqlite.bigfile/part-000" \
+            || { echo "FAIL: runtime-excluded shards were deleted by a save"; exit 1; }
+          test "$(cat "$BRANCH/region/r.0.0.mca")" = "new" \
+            || { echo "FAIL: region file was not updated"; exit 1; }
+
+          BIGFILE_PRUNE_KEEP=server/world-runtime-exclude.txt \
+            ./scripts/bigfile.sh prune "$RUN" "$BRANCH"
+          test -f "$BRANCH/data/DistantHorizons.sqlite.bigfile/part-000" \
+            || { echo "FAIL: prune deleted protected shards"; exit 1; }
+
+          echo "runtime-exclude protection OK"
+
+      - name: restore skips runtime-excluded paths
+        run: |
+          set -Eeuo pipefail
+          T="$(mktemp -d)"
+          BRANCH="$T/branch"; RUN="$T/run"
+          mkdir -p "$BRANCH/data/DistantHorizons.sqlite.bigfile" "$BRANCH/region"
+          echo p    > "$BRANCH/data/DistantHorizons.sqlite.bigfile/part-000"
+          echo data > "$BRANCH/region/r.0.0.mca"
+
+          rsync -a --delete --exclude-from=server/world-runtime-exclude.txt "$BRANCH/" "$RUN/"
+
+          test -f "$RUN/region/r.0.0.mca" || { echo "FAIL: world was not restored"; exit 1; }
+          test ! -e "$RUN/data/DistantHorizons.sqlite.bigfile" \
+            || { echo "FAIL: runtime-excluded data was downloaded to the server"; exit 1; }
+          echo "restore exclusion OK"
