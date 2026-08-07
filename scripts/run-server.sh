@@ -257,11 +257,11 @@ start_map_tunnel() {
   MAP_TUNNEL_HOST="$host"
   log "quick tunnel: $host"
 
-  if [[ -n "${CF_API_TOKEN:-}" && -n "${CF_ZONE_ID:-}" ]]; then
-    "$REPO_ROOT/scripts/map-origin.sh" "${MAP_HOSTNAME:-map.mtrdrgzcid.com}" "$host" \
-      || warn "could not point ${MAP_HOSTNAME:-map.mtrdrgzcid.com} at $host"
+  if [[ -n "${MAP_UPDATE_TOKEN:-}" ]]; then
+    "$REPO_ROOT/scripts/map-publish.sh" "${MAP_HOSTNAME:-map.mtrdrgzcid.com}" "$host" \
+      || warn "map Worker still points at the previous tunnel"
   else
-    warn "CF_API_TOKEN/CF_ZONE_ID unset — map reachable only at https://$host"
+    warn "MAP_UPDATE_TOKEN unset — map reachable only at https://$host"
   fi
 }
 

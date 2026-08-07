@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mtrdrgzcid-minecraft-map",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-01",
+
+  // A route rather than a custom domain. custom_domain wants to create and own
+  // the DNS record, and refuses when one already exists ("Hostname already has
+  // externally managed DNS records"). A route instead attaches to the existing
+  // proxied record for map.mtrdrgzcid.com and intercepts the request before it
+  // ever reaches an origin — which is why the placeholder address never matters.
+  "routes": [
+    {
+      "pattern": "map.mtrdrgzcid.com/*",
+      "zone_name": "mtrdrgzcid.com"
+    }
+  ],
+
+  // Holds the current *.trycloudflare.com hostname. Written by the runner at
+  // the start of each shift, read on every request with a short cache.
+  "kv_namespaces": [
+    {
+      "binding": "MAP_STATE",
+      "id": "4f2b4185afea4a568f002db4a01aeca2"
+    }
+  ],
+
+  "observability": {
+    "enabled": true
+  }
+}
