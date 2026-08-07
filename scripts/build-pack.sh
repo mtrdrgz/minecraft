@@ -83,7 +83,19 @@ rm -f "$BUILD_DIR/.modlist.tsv"
 log "applying pack overrides"
 OVR="$(mktemp -d)"
 unzip -q "$MRPACK" -d "$OVR"
+# The pack was zipped on Windows, so entries carry no POSIX read bits and every
+# subsequent cp fails with EACCES. Restore sane modes before touching anything.
+chmod -R u+rwX "$OVR"
+
 if [[ -d "$OVR/overrides" ]]; then
+  # Sinytra Connector's cache is a snapshot of the *client* instance: it holds
+  # Fabric mods already transformed for the client, including ones excluded from
+  # the server set. Connector rebuilds this at runtime, so ship it empty.
+  if [[ -d "$OVR/overrides/mods/.connector" ]]; then
+    log "dropping stale Connector cache ($(find "$OVR/overrides/mods/.connector" -type f | wc -l) files)"
+    rm -rf "$OVR/overrides/mods/.connector"
+  fi
+
   # Client-only asset trees are dead weight on a server; the jars inside
   # overrides/mods are checked against the lockfile drop list by name.
   rm -rf "$OVR/overrides/resourcepacks" "$OVR/overrides/shaderpacks"

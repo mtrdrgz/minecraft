@@ -42,21 +42,34 @@ log "restoring world from the '$WORLD_BRANCH' branch"
 
 sed -i "s|^rcon.password=.*|rcon.password=${RCON_PASSWORD}|" "$RUN_DIR/server.properties"
 
-# Repo whitelist is the source of truth, but /whitelist add done in-game is
-# persisted too — union them so neither is silently lost.
-python3 - "$REPO_ROOT/server/whitelist.json" "$RUN_DIR/whitelist.json" <<'PY'
+# The repo files and the runtime files are both authoritative: edits committed
+# to server/*.json must take effect, and /whitelist add or /op done in-game must
+# survive a handoff. Union them so neither source is silently discarded.
+python3 - "$REPO_ROOT/server" "$RUN_DIR" <<'PY'
 import json, os, sys
+repo_dir, run_dir = sys.argv[1], sys.argv[2]
+
 def load(p):
     try:
-        with open(p) as f: return json.load(f)
-    except Exception: return []
-merged, seen = [], set()
-for entry in load(sys.argv[1]) + load(sys.argv[2]):
-    key = (entry.get("uuid") or entry.get("name", "")).lower()
-    if key and key not in seen:
-        seen.add(key); merged.append(entry)
-with open(sys.argv[2], "w") as f: json.dump(merged, f, indent=2)
-print(f"whitelist: {len(merged)} entries")
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+for name in ("whitelist.json", "ops.json"):
+    merged, seen = [], set()
+    # Repo entries come first so their fields win on conflict.
+    for entry in load(os.path.join(repo_dir, name)) + load(os.path.join(run_dir, name)):
+        if not isinstance(entry, dict):
+            continue
+        key = (entry.get("uuid") or entry.get("name") or "").lower()
+        if key and key not in seen:
+            seen.add(key)
+            merged.append(entry)
+    with open(os.path.join(run_dir, name), "w", encoding="utf-8") as f:
+        json.dump(merged, f, indent=2)
+    print(f"{name}: {len(merged)} entries")
 PY
 
 # ---------------------------------------------------------------- shutdown ---
