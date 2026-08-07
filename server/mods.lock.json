@@ -7,8 +7,8 @@
   "generatedFrom": "Create+ 1.0.0",
   "counts": {
     "total": 176,
-    "keep": 120,
-    "dropped": 56
+    "keep": 121,
+    "dropped": 55
   },
   "mods": [
     {
@@ -396,6 +396,15 @@
       "url": "https://cdn.modrinth.com/data/tpehi7ww/versions/BYUUUeZA/dungeons-and-taverns-v4.4.4.jar",
       "size": 24859622,
       "sha512": "83069dc336bcc212059f753923373d9522aa5953bf4b4fe2a8cfa666b4e28d2d017daa66c4b35e315c3be8d1ad60c2872879dd47cc1f47665ebbfd102da76976",
+      "server": "required"
+    },
+    {
+      "slug": "e4mc",
+      "title": "e4mc",
+      "path": "mods/e4mc-neoforge-6.1.2.jar",
+      "url": "https://cdn.modrinth.com/data/qANg5Jrr/versions/uQddXQQr/e4mc-neoforge-6.1.2.jar",
+      "size": 664019,
+      "sha512": "69ebc143e271d3227f52d37fb4bc7956bb203650fe33210a2962bbd34652a931582a588570759f7312d74a03b16cb60d5d848985863c43a9dc213e14a018593f",
       "server": "required"
     },
     {
@@ -1162,11 +1171,6 @@
       "slug": "dynamic-fps",
       "title": "Dynamic FPS",
       "reason": "server_side=unsupported"
-    },
-    {
-      "slug": "e4mc",
-      "title": "e4mc",
-      "reason": "client-only (manual)"
     },
     {
       "slug": "eating-animations",

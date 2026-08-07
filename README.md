@@ -136,7 +136,38 @@ node tools/regen-lock.mjs audit.json modrinth.index.json server/mods.lock.json
 
 ## Setup
 
-### 1. playit.gg tunnel
+### 1. Transport: e4mc + dynamic DNS
+
+The server is exposed by **e4mc**, which is already in your modpack. It needs no
+account and no binary — its `ServerConnectionListener` mixin fires when the
+dedicated server binds its TCP listener, asks the relay for a domain, and logs:
+
+```
+[e4mc/]: Domain assigned: quiet-forest-1234.e4mc.link
+```
+
+Two things to know before relying on this:
+
+- **e4mc warns about this use case.** Its own source logs
+  `e4mc running on Dedicated Server; This works, but isn't recommended as e4mc
+  is designed for short-lived LAN servers`. It works; it is a free community
+  relay with no guarantees.
+- **The domain is different every shift.** The protocol requests a fresh
+  assignment each session, so there is no fixed or custom domain. That is why
+  the DNS record is rewritten on every boot — the dynamic DNS half of the setup.
+
+`scripts/run-server.sh` reads the domain from the log and calls
+`scripts/dns-update.sh`, which rewrites `minecraft.mtrdrgzcid.com` as an
+**unproxied** CNAME with a 60-second TTL. Unproxied is mandatory: Minecraft is
+raw TCP and Cloudflare's proxy cannot carry it.
+
+Expect roughly **one extra minute** of unreachability per handoff on top of the
+server gap, while the old CNAME expires from client resolvers.
+
+playit.gg remains an opt-in fallback: set `PLAYIT_SECRET` and it runs alongside.
+
+<details>
+<summary>playit.gg setup (only if you use the fallback)</summary>
 
 You need an **agent secret key**. Note that the `/account/agents/new-docker`
 URL cited by most playit tutorials is dead — it 404s. Use one of these instead.
@@ -178,14 +209,22 @@ that agent. Note the assigned public address, e.g. `abc-def.gl.at.ply.gg:41234`.
 > The secret is shown once and grants control of your tunnels. Put it straight
 > into the `PLAYIT_SECRET` repo secret; never commit it.
 
+</details>
+
 ### 2. Repository secrets
 
 **Settings → Secrets and variables → Actions → New repository secret**
 
-| Secret | Value |
-|---|---|
-| `PLAYIT_SECRET` | The playit agent secret key from step 1. |
-| `DISPATCH_TOKEN` | A fine-grained PAT scoped to this repo with **Actions: read and write** and **Contents: read**. |
+| Secret | Required | Value |
+|---|---|---|
+| `DISPATCH_TOKEN` | yes | Fine-grained PAT scoped to this repo with **Actions: read and write**, **Contents: read**. |
+| `CF_API_TOKEN` | yes | Cloudflare API token with **Zone → DNS → Edit** on `mtrdrgzcid.com`. Create at [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) using the *Edit zone DNS* template. |
+| `CF_ZONE_ID` | yes | Zone ID for `mtrdrgzcid.com`, shown in the domain's Overview page sidebar. |
+| `PLAYIT_SECRET` | no | Only if you want the playit fallback running alongside e4mc. |
+
+Without `CF_API_TOKEN`/`CF_ZONE_ID` the server still runs and still gets an e4mc
+domain — it just logs it instead of publishing it, and players must connect to
+the `*.e4mc.link` address directly that shift.
 
 `DISPATCH_TOKEN` is required because events triggered with the built-in
 `GITHUB_TOKEN` deliberately do not start new workflow runs — without it the
@@ -193,21 +232,17 @@ chain cannot relaunch itself. World pushes use `GITHUB_TOKEN` and need no PAT.
 
 ### 3. DNS
 
-Cloudflare's proxy cannot carry Minecraft traffic — public hostnames on Tunnel
-are HTTP/HTTPS only, and raw TCP requires Spectrum (Enterprise). Both records
-must therefore be **DNS only (grey cloud)**, not proxied.
+Nothing to create by hand. `dns-update.sh` manages the record itself on every
+boot, creating it the first time and updating it thereafter:
 
-| Type | Name | Value |
-|---|---|---|
-| `CNAME` | `minecraft` | `abc-def.gl.at.ply.gg` *(DNS only)* |
-| `SRV` | `_minecraft._tcp.minecraft` | priority `0`, weight `0`, port `41234`, target `minecraft.mtrdrgzcid.com` |
+| Type | Name | Value | Proxy | TTL |
+|---|---|---|---|---|
+| `CNAME` | `minecraft` | `<assigned>.e4mc.link` | **DNS only** | 60 |
 
-The SRV record is what lets players type `minecraft.mtrdrgzcid.com` without a
-port. playit's free tier assigns a random port; a paid plan can give you 25565
-directly, in which case the SRV record is optional.
-
-No dynamic DNS is needed — the playit endpoint is stable across runner
-restarts, so these records are set once.
+Never turn the orange cloud on for this record. Cloudflare's proxy handles
+HTTP/HTTPS only; raw TCP requires Spectrum, and Spectrum cannot use a Tunnel or
+a runner without an inbound address as its origin. Proxying it silently breaks
+every connection.
 
 ### 4. Whitelist
 

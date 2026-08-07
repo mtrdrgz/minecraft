@@ -5,8 +5,10 @@ const idx = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
 
 // Mods we drop regardless of Modrinth metadata, because they are client-only in
 // practice or actively harmful on a dedicated server.
+// NOTE: e4mc is deliberately NOT here. It is server_side:required on Modrinth
+// and its ServerConnectionListener mixin fires on a dedicated server's TCP
+// listener, which is exactly how this server is exposed to the internet.
 const FORCE_DROP = new Set([
-  'e4mc',            // opens a LAN tunnel from the client; meaningless + noisy on a server
   'do-a-barrel-roll',// pure client movement/camera
   'xaeros-minimap',  // client UI (server companion is a separate mod)
   'xaeros-world-map',// client UI

@@ -132,17 +132,47 @@ done
 log "server is up"
 
 # ------------------------------------------------------------------ tunnel ---
-if [[ -n "${PLAYIT_SECRET:-}" ]]; then
-  log "starting playit tunnel"
+# e4mc opens the tunnel itself: its ServerConnectionListener mixin fires when the
+# dedicated server binds its TCP listener, requests a domain from the relay, and
+# logs "Domain assigned: <host>". Nothing to start here — only to read.
+current_domain() {
+  grep -oE 'Domain assigned: [A-Za-z0-9.-]+' "$RUN_DIR/server.log" 2>/dev/null \
+    | tail -1 | awk '{print $3}'
+}
+
+E4MC_DOMAIN=""
+log "waiting for e4mc to be assigned a relay domain"
+for _ in $(seq 1 60); do          # up to ~5 minutes
+  E4MC_DOMAIN="$(current_domain)"
+  [[ -n "$E4MC_DOMAIN" ]] && break
+  sleep 5
+done
+
+update_dns() {
+  local target="$1"
+  if [[ -z "${CF_API_TOKEN:-}" || -z "${CF_ZONE_ID:-}" || -z "${DNS_NAME:-}" ]]; then
+    warn "CF_API_TOKEN / CF_ZONE_ID / DNS_NAME not all set — skipping DNS update."
+    warn "Players must connect to $target directly this shift."
+    return 0
+  fi
+  "$REPO_ROOT/scripts/dns-update.sh" "$DNS_NAME" "$target" \
+    || warn "DNS update FAILED — players must use $target directly this shift"
+}
+
+if [[ -n "$E4MC_DOMAIN" ]]; then
+  log "e4mc domain: $E4MC_DOMAIN"
+  update_dns "$E4MC_DOMAIN"
+else
+  warn "e4mc never reported a domain — the server is up but unreachable from outside."
+  warn "Check that e4mc is in the mod set and hostEnabled=true in config/e4mc/e4mc.toml."
+  grep -iE 'e4mc' "$RUN_DIR/server.log" | tail -20 >&2 || true
+fi
+
+# playit is kept as an opt-in fallback: set PLAYIT_SECRET and it runs alongside.
+if [[ -n "${PLAYIT_SECRET:-}" && -x "$HOME/bin/playitd" ]]; then
+  log "PLAYIT_SECRET set — starting playit alongside e4mc"
   "$HOME/bin/playitd" --secret "$PLAYIT_SECRET" > "$RUN_DIR/playit.log" 2>&1 &
   PLAYIT_PID=$!
-  sleep 5
-  if ! kill -0 "$PLAYIT_PID" 2>/dev/null; then
-    warn "playit agent exited immediately — players cannot connect. Log:"
-    cat "$RUN_DIR/playit.log" >&2
-  fi
-else
-  warn "PLAYIT_SECRET is not set — the server is running but unreachable"
 fi
 
 $RCON "say §aServer is online. This shift ends in ${SERVE_MINUTES} minutes." >/dev/null 2>&1 || true
@@ -189,6 +219,19 @@ while true; do
       $RCON "say §eRestart in ${m} minute(s). Your progress is saved automatically." >/dev/null 2>&1 || true
     fi
   done
+
+  # e4mc can be reassigned a different relay domain if its session drops and
+  # reconnects mid-shift. Without this the DNS record would point at a dead
+  # relay for the rest of the shift.
+  if (( elapsed % 60 < 10 )); then
+    latest="$(current_domain)"
+    if [[ -n "$latest" && "$latest" != "$E4MC_DOMAIN" ]]; then
+      warn "e4mc domain changed: $E4MC_DOMAIN -> $latest"
+      E4MC_DOMAIN="$latest"
+      update_dns "$E4MC_DOMAIN"
+      $RCON "say §ePublic address changed. If you disconnect, rejoin in a minute." >/dev/null 2>&1 || true
+    fi
+  fi
 
   if (( SECONDS - last_save >= AUTOSAVE_SECONDS )); then
     last_save=$SECONDS

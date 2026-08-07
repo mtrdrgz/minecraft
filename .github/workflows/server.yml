@@ -25,6 +25,9 @@ env:
   BUILD_DIR: /home/runner/mcbuild
   RUN_DIR: /home/runner/mcrun
   WORLD_BRANCH: world
+  # Surfaced as env because the `secrets` context is not available in a step's
+  # `if:` condition — only `env` is.
+  PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
 
 jobs:
   # Assembling the server tree takes ~5 minutes cold. Running it as a separate
@@ -105,7 +108,10 @@ jobs:
           chmod +x scripts/*.sh
           ./scripts/build-pack.sh
 
-      - name: Install playit agent
+      # Only needed for the optional playit fallback; e4mc needs no binary, it
+      # is a mod and opens its own tunnel from inside the server.
+      - name: Install playit agent (optional fallback)
+        if: ${{ env.PLAYIT_SECRET != '' }}
         run: |
           mkdir -p "$HOME/bin"
           curl -fsSL --retry 5 --retry-all-errors \
@@ -117,7 +123,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}          # world branch pushes
           DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}  # successor dispatch
-          PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
+          PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}    # optional fallback
+          # e4mc assigns a new relay domain every shift, so the CNAME is
+          # rewritten on each boot. This is the DDNS half of the setup.
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+          DNS_NAME: minecraft.mtrdrgzcid.com
           SERVE_MINUTES: ${{ github.event.inputs.serve_minutes || '325' }}
           AUTOSAVE_MINUTES: '10'
           HANDOFF_LEAD_MINUTES: '12'
