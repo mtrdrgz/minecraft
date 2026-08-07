@@ -10,6 +10,12 @@
 # that never changes, the Worker intercepts on a route, and only a KV value
 # moves — so no resolver or browser can cache a dead address.
 #
+# Publishing goes to the workers.dev hostname, NOT to map.mtrdrgzcid.com: the
+# custom domain is behind the zone's WAF, which challenges the runner's
+# datacenter IP with a "Just a moment..." interstitial and returns 403 before
+# the Worker ever runs. workers.dev bypasses zone rules. Visitors are unaffected
+# and keep using the custom domain.
+#
 # Usage: map-publish.sh <worker-host> <tunnel-host>
 set -Eeuo pipefail
 

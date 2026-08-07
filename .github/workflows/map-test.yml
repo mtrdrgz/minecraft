@@ -64,7 +64,7 @@ jobs:
           grep -q "$MARKER" /tmp/direct.txt || { echo "tunnel did not serve the marker"; exit 1; }
 
           echo "--- telling the Worker about this tunnel ---"
-          ./scripts/map-publish.sh map.mtrdrgzcid.com "$HOST"
+          ./scripts/map-publish.sh mtrdrgzcid-minecraft-map.mateorodriguezcid.workers.dev "$HOST"
 
       - name: Verify the domain serves it
         env:
