@@ -59,8 +59,19 @@ def main() -> int:
 
     opener, jar = build_opener()
 
+    # getpass silently returns "" on some Windows consoles, which then looks
+    # like a wrong password. Detect that instead of reporting a bogus 401.
     print("Contraseña de mtrdrgzcid.com (no se muestra ni se guarda):")
-    password = getpass.getpass("  > ")
+    try:
+        password = getpass.getpass("  > ")
+    except Exception as exc:
+        print(f"  el prompt oculto fallo ({exc}); usando entrada visible")
+        password = input("  > ")
+    password = password.strip()
+    if not password:
+        print("  no se leyo ninguna contraseña. Si tu terminal no soporta el", file=sys.stderr)
+        print("  prompt oculto, ejecuta el script desde PowerShell o cmd.", file=sys.stderr)
+        return 2
 
     body = json.dumps({"password": password}).encode()
     req = urllib.request.Request(
@@ -73,7 +84,13 @@ def main() -> int:
         with opener.open(req, timeout=30) as r:
             resp = json.loads(r.read().decode())
     except urllib.error.HTTPError as e:
-        print(f"  login rechazado: HTTP {e.code}", file=sys.stderr)
+        detail = e.read().decode("utf-8", "replace")[:200]
+        print(f"  login rechazado: HTTP {e.code} {detail}", file=sys.stderr)
+        if e.code == 401:
+            print("  -> la contraseña no coincide con SITE_PASSWORD", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"  no se pudo contactar con el sitio: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
     finally:
         del password  # not that it helps much, but do not keep it around
