@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mtrdrgzcid-minecraft-map",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-01",
+
+  // The runner publishes the tunnel address to the workers.dev hostname, not to
+  // map.mtrdrgzcid.com. Requests to the custom domain pass through the zone's
+  // WAF, which challenged the runner's datacenter IP with a "Just a moment..."
+  // interstitial and returned 403 before the Worker ever ran. workers.dev
+  // bypasses zone rules; visitors still use the custom domain.
+  "workers_dev": true,
+
+  // A route rather than a custom domain. custom_domain wants to create and own
+  // the DNS record, and refuses when one already exists ("Hostname already has
+  // externally managed DNS records"). A route instead attaches to the existing
+  // proxied record for map.mtrdrgzcid.com and intercepts the request before it
+  // ever reaches an origin — which is why the placeholder address never matters.
+  "routes": [
+    {
+      "pattern": "map.mtrdrgzcid.com/*",
+      "zone_name": "mtrdrgzcid.com"
+    }
+  ],
+
+  // Holds the current *.trycloudflare.com hostname. Written by the runner at
+  // the start of each shift, read on every request with a short cache.
+  "kv_namespaces": [
+    {
+      "binding": "MAP_STATE",
+      "id": "4f2b4185afea4a568f002db4a01aeca2"
+    }
+  ],
+
+  "observability": {
+    "enabled": true
+  }
+}

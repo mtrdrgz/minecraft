@@ -25,6 +25,9 @@ env:
   BUILD_DIR: /home/runner/mcbuild
   RUN_DIR: /home/runner/mcrun
   WORLD_BRANCH: world
+  MAP_BRANCH: map
+  # Surfaced as env so a step `if:` can read it; secrets context cannot be used there.
+  BLUEMAP_ENABLED: 'true'
   # Surfaced as env because the `secrets` context is not available in a step's
   # `if:` condition — only `env` is.
   PLAYIT_SECRET: ${{ secrets.PLAYIT_SECRET }}
@@ -119,6 +122,14 @@ jobs:
             https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64
           chmod +x "$HOME/bin/playitd"
 
+      - name: Install cloudflared
+        if: ${{ env.BLUEMAP_ENABLED == 'true' }}
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -fsSL --retry 5 --retry-all-errors             -o "$HOME/bin/cloudflared"             https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x "$HOME/bin/cloudflared"
+          "$HOME/bin/cloudflared" --version
+
       - name: Run server shift
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}          # world branch pushes
@@ -131,6 +142,13 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
           DNS_NAME: minecraft.mtrdrgzcid.com
+          # BlueMap is HTTP, so a Cloudflare quick tunnel can carry it — unlike
+          # the Minecraft port, which is raw TCP and needs playit. Quick tunnels
+          # need no credentials, hence no token here; the rotating hostname is
+          # absorbed by an Origin Rule instead of by DNS.
+          MAP_HOSTNAME: map.mtrdrgzcid.com
+          MAP_PUBLISH_HOST: mtrdrgzcid-minecraft-map.mateorodriguezcid.workers.dev
+          MAP_UPDATE_TOKEN: ${{ secrets.MAP_UPDATE_TOKEN }}
           SERVE_MINUTES: ${{ github.event.inputs.serve_minutes || '325' }}
           AUTOSAVE_MINUTES: '10'
           HANDOFF_LEAD_MINUTES: '12'
@@ -160,6 +178,7 @@ jobs:
           path: |
             /home/runner/mcrun/server.log
             /home/runner/mcrun/playit.log
+            /home/runner/mcrun/cloudflared.log
             /home/runner/mcrun/logs/
           retention-days: 7
           if-no-files-found: ignore

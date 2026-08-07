@@ -1,0 +1,14 @@
+{
+  "_comment": "Server-side mods that are NOT part of the .mrpack. Kept separate because mods.lock.json is regenerated from the pack and would drop anything added to it by hand. Same download+sha512 verification as the pack mods.",
+  "mods": [
+    {
+      "slug": "bluemap",
+      "title": "BlueMap",
+      "path": "mods/bluemap-5.7-neoforge.jar",
+      "url": "https://cdn.modrinth.com/data/swbUV1cr/versions/8iJcPOHJ/bluemap-5.7-neoforge.jar",
+      "size": 5414670,
+      "why": "3D web map served at map.mtrdrgzcid.com. client_side:unsupported, server_side:required.",
+      "sha512": "7332afbcd2389f846e2142a0937a85aec1a7c90b02876d396c701bdaccae529ef918adadca7c5e472b2f0fce2e7a614f1832f1579f310de8a4ba9b0a97114335"
+    }
+  ]
+}
