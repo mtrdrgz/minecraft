@@ -35,6 +35,20 @@ export BIGFILE_THRESHOLD_MB
 
 log() { printf '\033[35m[world]\033[0m %s\n' "$*"; }
 
+# rsync exits 23/24 for partial-transfer and vanished-file conditions. Protect
+# filters guarantee 23 ("cannot delete non-empty directory") on every save that
+# keeps runtime-excluded data, and under `set -e` that would abort every single
+# save. Treat those two as the warnings they are; anything else is fatal.
+rsync_ok() {
+  local rc=0
+  rsync "$@" || rc=$?
+  case "$rc" in
+    0)     return 0 ;;
+    23|24) log "rsync completed with warnings (exit $rc) — expected when protecting excluded paths"; return 0 ;;
+    *)     log "rsync FAILED (exit $rc)"; return "$rc" ;;
+  esac
+}
+
 git_c() { git -C "$WORLDGIT" "$@"; }
 
 configure() {
@@ -61,7 +75,7 @@ cmd_restore() {
   if [[ -d "$WORLDGIT/world" ]]; then
     local ex=()
     [[ -f "$RUNTIME_EXCLUDE" ]] && ex=(--exclude-from="$RUNTIME_EXCLUDE")
-    rsync -a --delete "${ex[@]}" "$WORLDGIT/world/" "$RUN_DIR/world/"
+    rsync_ok -a --delete "${ex[@]}" "$WORLDGIT/world/" "$RUN_DIR/world/"
     # Turn any sharded files back into the originals the server expects.
     # Verifies sha256 and aborts on mismatch rather than handing the server
     # a silently corrupt region file or database.
@@ -130,11 +144,11 @@ stage() {
       done < "$RUNTIME_EXCLUDE"
     fi
 
-    rsync -a --delete \
+    rsync_ok -a --delete \
       --exclude-from="$excludes" \
       --filter='P *.bigfile/' \
       "${protect[@]}" \
-      "$RUN_DIR/world/" "$WORLDGIT/world/"
+      "$RUN_DIR/world/" "$WORLDGIT/world/" || { rm -f "$excludes"; return 1; }
     rm -f "$excludes"
 
     "$BIGFILE" split "$RUN_DIR/world" "$WORLDGIT/world"

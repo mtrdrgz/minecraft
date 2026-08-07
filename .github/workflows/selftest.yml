@@ -67,12 +67,15 @@ jobs:
           echo p > "$BRANCH/data/DistantHorizons.sqlite.bigfile/part-000"
           printf 'name=DistantHorizons.sqlite\nsize=1\nmtime=1\nsha256=x\nparts=1\npartMB=48\n' \
             > "$BRANCH/data/DistantHorizons.sqlite.bigfile/manifest.json"
-          echo old > "$BRANCH/region/r.0.0.mca"
-          echo new > "$RUN/region/r.0.0.mca"
-          echo L    > "$RUN/level.dat"
 
-          # This is the real stage() rsync: the server has no DH, and --delete
-          # would wipe it from the branch without the protect filters.
+          # Distinct sizes and mtimes. Same-size files written in the same second
+          # are skipped by rsync's size+mtime quick check, which would make this
+          # test pass or fail for reasons unrelated to the filters.
+          echo "old" > "$BRANCH/region/r.0.0.mca"
+          echo "new-and-longer" > "$RUN/region/r.0.0.mca"
+          echo L > "$RUN/level.dat"
+          touch -d '2020-01-01' "$BRANCH/region/r.0.0.mca"
+
           PROTECT=()
           while IFS= read -r pat; do
             [ -z "$pat" ] && continue
@@ -80,11 +83,23 @@ jobs:
             PROTECT+=(--filter="P $pat")
           done < server/world-runtime-exclude.txt
 
+          # Protect filters make rsync unable to remove the now-non-empty parent
+          # directory, which is exit 23. world.sh runs under `set -e`, so if that
+          # were treated as failure every save would abort. Assert the code we
+          # actually get, so a future rsync behaviour change is caught here.
+          set +e
           rsync -a --delete --filter='P *.bigfile/' "${PROTECT[@]}" "$RUN/" "$BRANCH/"
+          RC=$?
+          set -e
+          echo "rsync exit code: $RC"
+          case "$RC" in
+            0|23|24) ;;
+            *) echo "FAIL: rsync exited $RC, which world.sh treats as fatal"; exit 1 ;;
+          esac
 
           test -f "$BRANCH/data/DistantHorizons.sqlite.bigfile/part-000" \
             || { echo "FAIL: runtime-excluded shards were deleted by a save"; exit 1; }
-          test "$(cat "$BRANCH/region/r.0.0.mca")" = "new" \
+          test "$(cat "$BRANCH/region/r.0.0.mca")" = "new-and-longer" \
             || { echo "FAIL: region file was not updated"; exit 1; }
 
           BIGFILE_PRUNE_KEEP=server/world-runtime-exclude.txt \
